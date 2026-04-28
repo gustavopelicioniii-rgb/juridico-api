@@ -95,8 +95,8 @@ export const advogadoService = {
   },
 
   getProcessos: async (id: string) => {
-    const { data } = await api.get<any[]>(`/advogados/${id}/processos`);
-    return data;
+    const { data } = await api.get<{ processos: any[] }>(`/advogados/${id}/processos`);
+    return data.processos;
   },
 };
 
@@ -111,14 +111,32 @@ export const processoService = {
     return data;
   },
 
+  create: async (processo: {
+    numeroProcesso: string;
+    tribunalId: string;
+    advogadoId: string;
+    classe?: string;
+    assunto?: string;
+  }) => {
+    const { data } = await api.post<{ processo: any }>('/processos', processo);
+    return data.processo;
+  },
+
+  delete: async (id: string) => {
+    await api.delete(`/processos/${id}`);
+  },
+
   search: async (tribunalCodigo: string, numero: string) => {
-    const { data } = await api.post<any>(`/tribunais/${tribunalCodigo}/buscar`, { numero });
+    const { data } = await api.post<any>(`/tribunais/${tribunalCodigo}/buscar`, { numeroProcesso: numero });
     return data;
   },
 
-  searchByOAB: async (tribunalCodigo: string, oab: string, uf: string) => {
-    const { data } = await api.post<{ processos: any[] }>(`/tribunais/${tribunalCodigo}/buscar-oab`, { oab, uf });
-    return data.processos;
+  searchByOAB: async (tribunalCodigo: string, params: { oab: string; nome?: string; advogadoId?: string }) => {
+    const { data } = await api.post<{ processos: any[]; totalEncontrados: number }>(
+      `/tribunais/${tribunalCodigo}/buscar-oab`,
+      params
+    );
+    return data;
   },
 
   refresh: async (tribunalCodigo: string, numero: string) => {
@@ -149,7 +167,10 @@ export const monitoramentoService = {
   },
 
   create: async (processoId: string, advogadoId: string, frequencia: 'DIARIA' | 'SEMANAL' | 'MENSAL') => {
-    const { data } = await api.post<any>(`/processos/${processoId}/monitorar`, { advogadoId, frequencia });
+    const intervaloMinutos: Record<string, number> = { DIARIA: 1440, SEMANAL: 10080, MENSAL: 43200 };
+    const { data } = await api.post<any>(`/processos/${processoId}/monitorar`, {
+      intervaloMinutos: intervaloMinutos[frequencia] ?? 60,
+    });
     return data;
   },
 
@@ -160,8 +181,8 @@ export const monitoramentoService = {
 
 export const tribunalService = {
   getAll: async () => {
-    const { data } = await api.get<any[]>('/tribunais');
-    return data;
+    const { data } = await api.get<{ tribunais: any[] }>('/tribunais');
+    return data.tribunais;
   },
 
   getStatus: async (codigo: string) => {

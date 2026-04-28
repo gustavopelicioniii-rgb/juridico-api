@@ -7,16 +7,27 @@ import Bull, { Queue, Job } from 'bull';
 import { registry } from '../tribunais';
 import TribunalService from '../services/TribunalService';
 import logger from '../config/logger';
+import ProcessoMonitoramentoService from '../services/ProcessoMonitoramentoService';
+import Monitoramento from '../models/Monitoramento';
+import Processo from '../models/Processo';
+import JobModel from '../models/Job';
 
 // Configuração da fila
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 
 export interface ScrapeJobData {
+  tipo?: 'PROCESSO' | 'INITIAL_OAB_CRAWL';
   numeroProcesso: string;
   tribunalCodigo: string;
   advogadoId?: string;
   processoId?: string; // Se já existir no banco
   prioridade?: number;
+  oab?: string;
+  nome?: string;
+  requestedBy?: string;
+  source?: 'admin-create' | 'self-register';
+  correlationId?: string;
+  tribunais?: string[];
 }
 
 export interface ScrapeJobResult {
@@ -24,6 +35,9 @@ export interface ScrapeJobResult {
   processoId?: string;
   novasMovimentacoes?: number;
   erro?: string;
+  tipo?: 'PROCESSO' | 'INITIAL_OAB_CRAWL';
+  totalEncontrados?: number;
+  totalSalvos?: number;
 }
 
 // Criação da fila
@@ -53,10 +67,66 @@ scrapeQueue.on('failed', (job, err) => {
     error: err.message, 
     attemptsMade: job.attemptsMade 
   });
+
+  const { tipo } = job.data || {};
+  if (tipo === 'INITIAL_OAB_CRAWL') {
+    void JobModel.findAll({
+      where: { tipo: 'SCRAPE' },
+      order: [['createdAt', 'DESC']],
+      limit: 50,
+    }).then((jobs) => {
+      const auditJob = jobs.find((candidate) => {
+        const payload = (candidate.payload ?? {}) as Record<string, unknown>;
+        return payload.mode === 'initial_oab_crawl' && payload.queueJobId === String(job.id);
+      });
+      if (auditJob) {
+        return auditJob.update({
+          status: 'FALHO',
+          erro: err.message,
+          completedAt: new Date(),
+          tentativas: job.attemptsMade,
+        });
+      }
+      return null;
+    }).catch((updateError) => {
+      logger.warn('Falha ao atualizar status de auditoria (failed)', {
+        queueJobId: job.id,
+        error: (updateError as Error).message,
+      });
+    });
+  }
 });
 
 scrapeQueue.on('completed', (job, result) => {
   logger.info(`Job ${job.id} completed:`, result);
+
+  const { tipo } = job.data || {};
+  if (tipo === 'INITIAL_OAB_CRAWL') {
+    void JobModel.findAll({
+      where: { tipo: 'SCRAPE' },
+      order: [['createdAt', 'DESC']],
+      limit: 50,
+    }).then((jobs) => {
+      const auditJob = jobs.find((candidate) => {
+        const payload = (candidate.payload ?? {}) as Record<string, unknown>;
+        return payload.mode === 'initial_oab_crawl' && payload.queueJobId === String(job.id);
+      });
+      if (auditJob) {
+        return auditJob.update({
+          status: (result as ScrapeJobResult)?.sucesso ? 'CONCLUIDO' : 'FALHO',
+          erro: (result as ScrapeJobResult)?.erro,
+          completedAt: new Date(),
+          tentativas: job.attemptsMade,
+        });
+      }
+      return null;
+    }).catch((updateError) => {
+      logger.warn('Falha ao atualizar status de auditoria (completed)', {
+        queueJobId: job.id,
+        error: (updateError as Error).message,
+      });
+    });
+  }
 });
 
 /**
@@ -71,6 +141,174 @@ export async function agendarScraping(data: ScrapeJobData): Promise<Job<ScrapeJo
   logger.info(`Scraping agendado: ${data.numeroProcesso} em ${data.tribunalCodigo}`, { jobId: job.id });
   
   return job;
+}
+
+/**
+ * Agenda busca inicial por OAB (fire-and-forget) para onboarding de advogado
+ */
+export async function agendarInitialOABCrawl(
+  data: Omit<ScrapeJobData, 'numeroProcesso' | 'tribunalCodigo' | 'tipo'> & {
+    advogadoId: string;
+    oab: string;
+    tribunais?: string[];
+  }
+): Promise<Job<ScrapeJobData>> {
+  const oabNormalizada = data.oab.toUpperCase().replace(/\s/g, '');
+  const cooldownMs = Number(process.env.INITIAL_OAB_CRAWL_COOLDOWN_MS || 5 * 60 * 1000);
+  const threshold = Date.now() - cooldownMs;
+
+  const jobsAtivos = await scrapeQueue.getJobs(['waiting', 'active', 'delayed']);
+  const duplicate = jobsAtivos.find((job) => {
+    const payload = job.data as ScrapeJobData;
+    return payload.tipo === 'INITIAL_OAB_CRAWL' &&
+      payload.advogadoId === data.advogadoId &&
+      payload.oab?.toUpperCase().replace(/\s/g, '') === oabNormalizada &&
+      job.timestamp >= threshold;
+  });
+
+  if (duplicate) {
+    logger.info('Initial OAB crawl já agendado recentemente', {
+      advogadoId: data.advogadoId,
+      oab: oabNormalizada,
+      existingJobId: duplicate.id,
+    });
+    return duplicate as Job<ScrapeJobData>;
+  }
+
+  const tribunaisPadrao = process.env.INITIAL_OAB_TRIBUNAIS?.split(',')
+    .map((codigo) => codigo.trim().toUpperCase())
+    .filter(Boolean);
+
+  const tribunaisAlvo = (data.tribunais && data.tribunais.length > 0 ? data.tribunais : tribunaisPadrao) || ['TJSP'];
+
+  const job = await scrapeQueue.add({
+    ...data,
+    tipo: 'INITIAL_OAB_CRAWL',
+    oab: oabNormalizada,
+    numeroProcesso: '__INITIAL_OAB_CRAWL__',
+    tribunalCodigo: '__MULTI__',
+    tribunais: tribunaisAlvo,
+  }, {
+    priority: data.prioridade || 1,
+    jobId: `initial-oab-${data.advogadoId}-${oabNormalizada}`,
+    removeOnComplete: false,
+    removeOnFail: false,
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 15000,
+    },
+  });
+
+  logger.info('Initial OAB crawl agendado', {
+    advogadoId: data.advogadoId,
+    oab: oabNormalizada,
+    tribunais: tribunaisAlvo,
+    correlationId: data.correlationId,
+    jobId: job.id,
+  });
+
+  return job;
+}
+
+async function ensureMonitoramentoParaProcesso(processoId: string, advogadoId?: string): Promise<void> {
+  if (!advogadoId) {
+    return;
+  }
+
+  const existingMonitoramento = await Monitoramento.findOne({
+    where: { processoId, ativo: true },
+  });
+
+  if (existingMonitoramento) {
+    return;
+  }
+
+  await Monitoramento.create({
+    advogadoId,
+    processoId,
+    intervaloMinutos: 60,
+    ativo: true,
+  });
+}
+
+async function processInitialOABCrawl(job: Job<ScrapeJobData>): Promise<ScrapeJobResult> {
+  const { advogadoId, oab, nome, tribunais = ['TJSP'], correlationId } = job.data;
+
+  if (!advogadoId || !oab) {
+    throw new Error('Job INITIAL_OAB_CRAWL inválido: advogadoId e oab são obrigatórios');
+  }
+
+  let totalEncontrados = 0;
+  let totalSalvos = 0;
+
+  for (const tribunalCodigoRaw of tribunais) {
+    const tribunalCodigo = tribunalCodigoRaw.toUpperCase();
+    const adapter = registry.get(tribunalCodigo);
+
+    if (!adapter) {
+      logger.warn('Tribunal ignorado no initial_oab_crawl (não suportado)', {
+        tribunalCodigo,
+        advogadoId,
+        oab,
+        correlationId,
+      });
+      continue;
+    }
+
+    const resultadoBusca = await adapter.buscarPorOAB(oab, nome);
+    totalEncontrados += resultadoBusca.total;
+
+    for (const processoResumo of resultadoBusca.processos) {
+      try {
+        const resultado = await TribunalService.buscarESalvarProcesso(
+          processoResumo.numeroProcesso,
+          tribunalCodigo,
+          advogadoId
+        );
+        totalSalvos += 1;
+        await ensureMonitoramentoParaProcesso(resultado.processo.id, advogadoId);
+      } catch (error) {
+        logger.warn('Falha ao salvar processo durante initial_oab_crawl', {
+          tribunalCodigo,
+          numeroProcesso: processoResumo.numeroProcesso,
+          advogadoId,
+          oab,
+          correlationId,
+          error: (error as Error).message,
+        });
+      }
+    }
+  }
+
+  if (totalSalvos === 0) {
+    const processosExistentes = await Processo.count({ where: { advogadoId } });
+    logger.info('Initial OAB crawl concluído sem novos processos', {
+      advogadoId,
+      oab,
+      correlationId,
+      totalEncontrados,
+      processosExistentes,
+    });
+  }
+
+  try {
+    await ProcessoMonitoramentoService.cadastrarOABMonitorada(oab, undefined, 5);
+  } catch (error) {
+    logger.warn('Falha ao garantir monitoramento contínuo da OAB', {
+      advogadoId,
+      oab,
+      correlationId,
+      error: (error as Error).message,
+    });
+  }
+
+  return {
+    sucesso: true,
+    tipo: 'INITIAL_OAB_CRAWL',
+    totalEncontrados,
+    totalSalvos,
+  };
 }
 
 /**
@@ -98,11 +336,15 @@ export async function agendarScrapingBatch(
  * Processador de jobs de scraping
  */
 scrapeQueue.process(async (job: Job<ScrapeJobData>): Promise<ScrapeJobResult> => {
-  const { numeroProcesso, tribunalCodigo, advogadoId, processoId } = job.data;
+  const { tipo = 'PROCESSO', numeroProcesso, tribunalCodigo, advogadoId, correlationId } = job.data;
   
-  logger.info(`Processando scraping: ${numeroProcesso}`, { jobId: job.id });
+  logger.info(`Processando scraping: ${tipo}`, { jobId: job.id, correlationId });
   
   try {
+    if (tipo === 'INITIAL_OAB_CRAWL') {
+      return processInitialOABCrawl(job);
+    }
+
     // Verifica se o adapter existe
     const adapter = registry.get(tribunalCodigo);
     if (!adapter) {
@@ -118,15 +360,17 @@ scrapeQueue.process(async (job: Job<ScrapeJobData>): Promise<ScrapeJobResult> =>
     
     return {
       sucesso: true,
+      tipo: 'PROCESSO',
       processoId: resultado.processo.id,
       novasMovimentacoes: resultado.novasMovimentacoes,
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Erro desconhecido';
     logger.error(`Erro no scraping de ${numeroProcesso}:`, error);
     
     return {
       sucesso: false,
-      erro: error.message,
+      erro: message,
     };
   }
 });

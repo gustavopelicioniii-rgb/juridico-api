@@ -60,7 +60,32 @@ router.post('/advogados', async (req: Request, res: Response) => {
     }
     
     const advogado = await Advogado.create({ oab, nome, email });
+
+    const { default: AdvogadoOnboardingService } = await import('../services/AdvogadoOnboardingService');
+    void AdvogadoOnboardingService.start({
+      advogadoId: advogado.id,
+      oab: advogado.oab,
+      nome: advogado.nome,
+      source: 'admin-create',
+      requestedBy: 'admin',
+    });
+
     res.status(201).json({ advogado });
+  } catch (error) {
+    res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao criar advogado.' } });
+  }
+});
+
+router.get('/advogados/:id/onboarding-status', async (req: Request, res: Response) => {
+  try {
+    const advogado = await Advogado.findByPk(req.params.id);
+    if (!advogado) {
+      return res.status(404).json({ erro: { codigo: 'ADVOGADO_NAO_ENCONTRADO', mensagem: 'Advogado não encontrado.' } });
+    }
+
+    const { default: AdvogadoOnboardingService } = await import('../services/AdvogadoOnboardingService');
+    const status = await AdvogadoOnboardingService.getStatusByAdvogadoId(advogado.id);
+    res.json({ status });
   } catch (error) {
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao criar advogado.' } });
   }
@@ -115,6 +140,21 @@ router.get('/advogados/:id/processos', async (req: Request, res: Response) => {
     res.json({ processos });
   } catch (error) {
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar processos.' } });
+  }
+});
+
+router.get('/advogados/:id/onboarding-status', async (req: Request, res: Response) => {
+  try {
+    const advogado = await Advogado.findByPk(req.params.id);
+    if (!advogado) {
+      return res.status(404).json({ erro: { codigo: 'ADVOGADO_NAO_ENCONTRADO', mensagem: 'Advogado não encontrado.' } });
+    }
+
+    const { default: AdvogadoOnboardingService } = await import('../services/AdvogadoOnboardingService');
+    const status = await AdvogadoOnboardingService.getStatusByAdvogadoId(advogado.id);
+    res.json({ status });
+  } catch (error) {
+    res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar status de onboarding.' } });
   }
 });
 

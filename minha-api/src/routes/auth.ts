@@ -123,6 +123,15 @@ router.post('/register', async (req: Request, res: Response) => {
       ativo: true,
     });
 
+    const { default: AdvogadoOnboardingService } = await import('../services/AdvogadoOnboardingService');
+    void AdvogadoOnboardingService.start({
+      advogadoId: advogado.id,
+      oab: advogado.oab,
+      nome: advogado.nome,
+      source: 'self-register',
+      requestedBy: 'self-register',
+    });
+
     const payload: Omit<AuthPayload, 'iat' | 'exp'> = {
       userId: advogado.id,
       advogadoId: advogado.id,

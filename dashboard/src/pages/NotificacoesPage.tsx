@@ -1,17 +1,33 @@
-import { useState } from 'react';
-import { Bell, Check, CheckCheck, Trash2, FileText, AlertTriangle, Clock } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Bell, Check, CheckCheck, Trash2, FileText, AlertTriangle, Clock, Loader2 } from 'lucide-react';
+import { notificationService } from '../services/api';
 import type { Notification } from '../types/api';
 
-const mockNotifications: Notification[] = [
-  { id: '1', tipo: 'NOVA_MOVIMENTACAO', titulo: 'Nova Movimentação', mensagem: 'Processo 5001234-56.2024.8.13.0021 teve nova movimentação: Audiência redesignada', processoId: '1', lida: false, createdAt: '2024-03-16T14:30:00' },
-  { id: '2', tipo: 'JOB_COMPLETED', titulo: 'Scraping Concluído', mensagem: 'Atualização do processo 1001234-56.2024.8.13.0608 concluída com sucesso', processoId: '2', jobId: '1', lida: false, createdAt: '2024-03-16T13:45:00' },
-  { id: '3', tipo: 'JOB_FAILED', titulo: 'Erro no Scraping', mensagem: 'Falha ao atualizar processo 5009876-12.2023.8.13.0045 - Timeout na API do TJMG', processoId: '5', jobId: '2', lida: true, createdAt: '2024-03-16T12:00:00' },
-  { id: '4', tipo: 'NOVA_MOVIMENTACAO', titulo: 'Nova Movimentação', mensagem: 'Processo 0001234-56.2024.8.26.0102 teve nova movimentação: Recurso recebido', processoId: '3', lida: true, createdAt: '2024-03-16T10:15:00' },
-  { id: '5', tipo: 'JOB_COMPLETED', titulo: 'Scraping Concluído', mensagem: 'Atualização do processo 0012345-78.2024.8.05.0001 concluída com sucesso', processoId: '4', jobId: '3', lida: true, createdAt: '2024-03-15T16:30:00' },
-];
+function getNotificationTitle(tipo: string, mensagem: string): string {
+  switch (tipo) {
+    case 'SCRAPING_COMPLETO':
+      return 'Scraping Concluído';
+    case 'ERRO_SCRAPING':
+      return 'Erro no Scraping';
+    case 'PROCESSO_ATUALIZADO':
+      return 'Processo Atualizado';
+    case 'NOVA_MOVIMENTACAO':
+      return 'Nova Movimentação';
+    case 'NOVO_JOB':
+      return 'Novo Job Agendado';
+    case 'JOB_COMPLETED':
+      return 'Job Concluído';
+    case 'JOB_FAILED':
+      return 'Job Falhou';
+    default:
+      return mensagem.split(':')[0] || 'Notificação';
+  }
+}
 
 export default function NotificacoesPage() {
-  const [notifications, setNotifications] = useState<Notification[]>(mockNotifications);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'unread'>('all');
 
   const filteredNotifications = notifications.filter((n) => {
@@ -20,28 +36,58 @@ export default function NotificacoesPage() {
 
   const unreadCount = notifications.filter((n) => !n.lida).length;
 
-  const markAsRead = (id: string) => {
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, lida: true } : n))
-    );
+  const fetchNotifications = () => {
+    setLoading(true);
+    setError(null);
+    notificationService.getAll({ limite: 50 })
+      .then(setNotifications)
+      .catch(() => setError('Erro ao carregar notificações'))
+      .finally(() => setLoading(false));
   };
 
-  const markAllAsRead = () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, lida: true })));
+  useEffect(() => {
+    fetchNotifications();
+  }, []);
+
+  const markAsRead = async (id: string) => {
+    try {
+      await notificationService.markAsRead(id);
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, lida: true } : n))
+      );
+    } catch {
+      setError('Erro ao marcar como lida');
+    }
   };
 
-  const deleteNotification = (id: string) => {
-    setNotifications((prev) => prev.filter((n) => n.id !== id));
+  const markAllAsRead = async () => {
+    try {
+      await notificationService.markAllAsRead();
+      setNotifications((prev) => prev.map((n) => ({ ...n, lida: true })));
+    } catch {
+      setError('Erro ao marcar todas como lidas');
+    }
+  };
+
+  const deleteNotification = async (id: string) => {
+    try {
+      setNotifications((prev) => prev.filter((n) => n.id !== id));
+    } catch {
+      setError('Erro ao excluir notificação');
+    }
   };
 
   const getIcon = (tipo: Notification['tipo']) => {
     switch (tipo) {
-      case 'NOVA_MOVIMENTACAO':
-        return <FileText className="w-5 h-5" />;
+      case 'SCRAPING_COMPLETO':
       case 'JOB_COMPLETED':
         return <Check className="w-5 h-5" />;
+      case 'ERRO_SCRAPING':
       case 'JOB_FAILED':
         return <AlertTriangle className="w-5 h-5" />;
+      case 'NOVA_MOVIMENTACAO':
+      case 'PROCESSO_ATUALIZADO':
+        return <FileText className="w-5 h-5" />;
       default:
         return <Bell className="w-5 h-5" />;
     }
@@ -49,16 +95,27 @@ export default function NotificacoesPage() {
 
   const getIconColor = (tipo: Notification['tipo']) => {
     switch (tipo) {
-      case 'NOVA_MOVIMENTACAO':
-        return 'bg-brand-500/20 text-brand-400';
+      case 'SCRAPING_COMPLETO':
       case 'JOB_COMPLETED':
         return 'bg-emerald-500/20 text-emerald-400';
+      case 'ERRO_SCRAPING':
       case 'JOB_FAILED':
         return 'bg-red-500/20 text-red-400';
+      case 'NOVA_MOVIMENTACAO':
+      case 'PROCESSO_ATUALIZADO':
+        return 'bg-brand-500/20 text-brand-400';
       default:
         return 'bg-slate-500/20 text-slate-400';
     }
   };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <Loader2 className="w-8 h-8 animate-spin text-brand-500" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -90,6 +147,12 @@ export default function NotificacoesPage() {
         </div>
       </div>
 
+      {error && (
+        <div className="glass rounded-2xl p-4 border border-red-500/30">
+          <p className="text-red-400 text-sm">{error}</p>
+        </div>
+      )}
+
       <div className="space-y-3">
         {filteredNotifications.map((notification) => (
           <div
@@ -105,7 +168,7 @@ export default function NotificacoesPage() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between mb-1">
                   <h3 className={`font-semibold ${notification.lida ? 'text-slate-300' : 'text-white'}`}>
-                    {notification.titulo}
+                    {getNotificationTitle(notification.tipo, notification.mensagem)}
                   </h3>
                   <span className="text-xs text-slate-500 flex items-center gap-1">
                     <Clock className="w-3 h-3" />

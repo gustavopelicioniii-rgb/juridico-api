@@ -7,9 +7,10 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import { connectDatabase } from './config/database';
-import scrapeQueue from './queues/ScraperQueue';
+import './queues/ScraperQueue';
 import { notificationService } from './websocket';
 import MonitoringService from './services/MonitoringService';
+import ProcessoMonitoramentoService from './services/ProcessoMonitoramentoService';
 import logger from './config/logger';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
@@ -35,6 +36,7 @@ async function main() {
 
     // Inicia serviço de monitoramento
     MonitoringService.start(60 * 1000); // a cada 1 minuto
+    ProcessoMonitoramentoService.iniciar();
 
     logger.info('Worker started successfully');
 
@@ -42,6 +44,7 @@ async function main() {
     const shutdown = async (signal: string) => {
       logger.info(`${signal} received. Shutting down worker...`);
       MonitoringService.stop();
+      ProcessoMonitoramentoService.parar();
       await notificationService.shutdown();
       process.exit(0);
     };

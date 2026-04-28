@@ -29,6 +29,7 @@ export default function AdvogadosPage() {
   const [selectedAdvogado, setSelectedAdvogado] = useState<Advogado | null>(null);
   const [processos, setProcessos] = useState<Processo[]>([]);
   const [processosLoading, setProcessosLoading] = useState(false);
+  const [onboardingMessage, setOnboardingMessage] = useState<string | null>(null);
 
   useEffect(() => {
     fetchAdvogados();
@@ -78,7 +79,10 @@ export default function AdvogadosPage() {
       if (editingAdvogado) {
         await advogadoService.update(editingAdvogado.id, formData);
       } else {
-        await advogadoService.create(formData as Omit<Advogado, 'id' | 'createdAt'>);
+        const createdAdvogado = await advogadoService.create(formData as Omit<Advogado, 'id' | 'createdAt'>);
+        setOnboardingMessage(
+          `Advogado ${createdAdvogado.nome} criado. Coleta inicial por OAB iniciada em background.`
+        );
       }
       setShowModal(false);
       fetchAdvogados();
@@ -121,9 +125,15 @@ export default function AdvogadosPage() {
     if (!tribunal) return;
     
     try {
-      const processos = await processoService.searchByOAB(tribunal, advogado.oab, advogado.uf);
-      if (processos && processos.length > 0) {
-        alert(`Encontrado(s) ${processos.length} processo(s): ${processos.map(p => p.numero).join(', ')}`);
+      const resultado = await processoService.searchByOAB(tribunal, {
+        oab: advogado.oab,
+        nome: advogado.nome,
+        advogadoId: advogado.id,
+      });
+      if (resultado.processos && resultado.processos.length > 0) {
+        alert(
+          `Encontrado(s) ${resultado.totalEncontrados} processo(s): ${resultado.processos.map((p) => p.numeroProcesso || p.numero).join(', ')}`
+        );
       } else {
         alert('Nenhum processo encontrado');
       }
@@ -176,6 +186,11 @@ export default function AdvogadosPage() {
       {error && (
         <div className="glass rounded-2xl p-4 bg-red-500/10 border border-red-500/30">
           <p className="text-red-400">{error}</p>
+        </div>
+      )}
+      {onboardingMessage && (
+        <div className="glass rounded-2xl p-4 bg-emerald-500/10 border border-emerald-500/30">
+          <p className="text-emerald-300">{onboardingMessage}</p>
         </div>
       )}
 
@@ -378,7 +393,7 @@ export default function AdvogadosPage() {
                     <div key={processo.id} className="bg-dark-200/50 rounded-xl p-4 border border-brand-900/20">
                       <div className="flex items-start justify-between mb-2">
                         <div>
-                          <p className="font-mono text-brand-400 font-medium">{processo.numero}</p>
+                          <p className="font-mono text-brand-400 font-medium">{processo.numeroProcesso || processo.numero}</p>
                           <p className="text-sm text-slate-400 mt-1">{processo.tribunalNome || processo.tribunalCodigo}</p>
                         </div>
                         <span className={`px-2 py-1 rounded-lg text-xs font-medium ${

@@ -1,28 +1,17 @@
+import { useState, useEffect } from 'react';
 import {
   FileText,
-  Users,
   Activity,
   AlertTriangle,
   RefreshCw,
   ArrowUpRight,
   ArrowDownRight,
   Scale,
+  Loader2,
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, CartesianGrid, XAxis, YAxis, Tooltip, Area } from 'recharts';
+import { dashboardService, processoService, jobService } from '../services/api';
 import type { Processo, Job } from '../types/api';
-
-const mockProcessos: Processo[] = [
-  { id: '1', numero: '5001234-56.2024.8.13.0021', tribunalId: '1', tribunalNome: 'TJMG', tipo: 'Cível', area: 'Direito do Consumidor', classe: 'Procedimento Comum Cível', assunto: 'Contrato Bancário', distribuicao: '2024-01-15', status: 'MONITORANDO', ultimaAtualizacao: '2024-03-10', createdAt: '2024-01-15' },
-  { id: '2', numero: '1001234-56.2024.8.13.0608', tribunalId: '2', tribunalNome: 'TJSP', tipo: 'Criminal', area: 'Direito Penal', classe: 'Ação Penal - Procedimento Ordinário', assunto: 'Crime contra o patrimônio', distribuicao: '2024-02-20', status: 'ATIVO', ultimaAtualizacao: '2024-03-12', createdAt: '2024-02-20' },
-  { id: '3', numero: '0001234-56.2024.8.26.0102', tribunalId: '3', tribunalNome: 'TRT-2', tipo: 'Trabalhista', area: 'Direito do Trabalho', classe: 'Recurso Ordinário', assunto: 'Hor extras e adicional noturno', distribuicao: '2024-03-01', status: 'ATIVO', ultimaAtualizacao: '2024-03-11', createdAt: '2024-03-01' },
-];
-
-const mockJobs: Job[] = [
-  { id: '1', tipo: 'SCRAPE', status: 'COMPLETED', tentativas: 1, createdAt: '2024-03-12T10:00:00', completedAt: '2024-03-12T10:00:15' },
-  { id: '2', tipo: 'SCRAPE', status: 'PROCESSING', tentativas: 1, createdAt: '2024-03-12T10:01:00' },
-  { id: '3', tipo: 'REFRESH', status: 'PENDING', tentativas: 0, createdAt: '2024-03-12T10:02:00' },
-  { id: '4', tipo: 'SCRAPE', status: 'FAILED', tentativas: 3, erro: 'CAPTCHA timeout', createdAt: '2024-03-12T09:00:00' },
-];
 
 const mockMovimentacoes = [
   { data: '2024-03-10', count: 12 },
@@ -63,29 +52,94 @@ function ProcessCard({ processo }: { processo: Processo }) {
   return (
     <div className="glass-light rounded-xl p-5 card-hover">
       <div className="flex items-start justify-between mb-3">
-        <span className={`px-2 py-1 rounded-lg text-xs font-medium border ${statusColors[processo.status]}`}>
+        <span className={`px-2 py-1 rounded-lg text-xs font-medium border ${statusColors[processo.status] || 'bg-slate-500/20 text-slate-400 border-slate-500/30'}`}>
           {processo.status}
         </span>
-        <span className="text-xs text-slate-500">{processo.tribunalNome}</span>
+        <span className="text-xs text-slate-500">{processo.tribunalNome || processo.tribunalCodigo}</span>
       </div>
-      <h4 className="font-mono text-sm text-slate-200 mb-2">{processo.numero}</h4>
+      <h4 className="font-mono text-sm text-slate-200 mb-2">{processo.numeroProcesso || processo.numero}</h4>
       <p className="text-sm text-slate-400 mb-3">{processo.classe}</p>
       <div className="flex items-center justify-between text-xs text-slate-500">
-        <span>{processo.area}</span>
-        <span>Atualizado: {new Date(processo.ultimaAtualizacao).toLocaleDateString('pt-BR')}</span>
+        <span>{processo.area || processo.assunto}</span>
+        <span>Atualizado: {processo.ultimaAtualizacao ? new Date(processo.ultimaAtualizacao).toLocaleDateString('pt-BR') : '—'}</span>
       </div>
     </div>
   );
 }
 
 export default function DashboardPage() {
+  const [stats, setStats] = useState<{
+    totalProcessos: number;
+    jobsPendentes: number;
+    jobsFalhos: number;
+    monitoramentosAtivos: number;
+  } | null>(null);
+  const [processos, setProcessos] = useState<Processo[]>([]);
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    Promise.all([
+      dashboardService.getStats().catch(() => null),
+      processoService.getAll({ limit: 6 }).catch(() => ({ processos: [] })),
+      jobService.getAll({ limite: 4 }).catch(() => []),
+    ]).then(([statsData, procData, jobsData]) => {
+      if (statsData) setStats(statsData);
+      if (procData?.processos) setProcessos(procData.processos);
+      if (Array.isArray(jobsData)) setJobs(jobsData);
+    }).finally(() => setLoading(false));
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <Loader2 className="w-8 h-8 animate-spin text-brand-500" />
+      </div>
+    );
+  }
+
+  const jobStatusColors: Record<string, string> = {
+    CONCLUIDO: 'bg-emerald-500',
+    COMPLETED: 'bg-emerald-500',
+    PROCESSANDO: 'bg-brand-500 animate-pulse',
+    PROCESSING: 'bg-brand-500 animate-pulse',
+    PENDENTE: 'bg-amber-500',
+    PENDING: 'bg-amber-500',
+    FALHO: 'bg-red-500',
+    FAILED: 'bg-red-500',
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard title="Processos Monitorados" value={156} change={12} icon={FileText} trend="up" />
-        <StatCard title="Advogados Ativos" value={8} change={0} icon={Users} trend="up" />
-        <StatCard title="Jobs em Andamento" value={3} change={-25} icon={Activity} trend="down" />
-        <StatCard title="Falhas Recentes" value={2} change={-50} icon={AlertTriangle} trend="up" />
+        <StatCard
+          title="Processos Monitorados"
+          value={stats?.totalProcessos ?? 0}
+          change={12}
+          icon={FileText}
+          trend="up"
+        />
+        <StatCard
+          title="Monitoramentos Ativos"
+          value={stats?.monitoramentosAtivos ?? 0}
+          change={0}
+          icon={Activity}
+          trend="up"
+        />
+        <StatCard
+          title="Jobs Pendentes"
+          value={stats?.jobsPendentes ?? 0}
+          change={-25}
+          icon={RefreshCw}
+          trend="down"
+        />
+        <StatCard
+          title="Falhas Recentes"
+          value={stats?.jobsFalhos ?? 0}
+          change={-50}
+          icon={AlertTriangle}
+          trend="up"
+        />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -126,23 +180,18 @@ export default function DashboardPage() {
             <RefreshCw className="w-5 h-5 text-slate-500" />
           </div>
           <div className="space-y-4">
-            {mockJobs.slice(0, 4).map((job) => {
-              const statusColors: Record<string, string> = {
-                COMPLETED: 'bg-emerald-500',
-                PROCESSING: 'bg-brand-500 animate-pulse',
-                PENDING: 'bg-amber-500',
-                FAILED: 'bg-red-500',
-              };
-              return (
-                <div key={job.id} className="flex items-center gap-3">
-                  <div className={`w-2 h-2 rounded-full ${statusColors[job.status]}`} />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-slate-300 truncate">{job.tipo} - {job.status}</p>
-                    <p className="text-xs text-slate-500">{new Date(job.createdAt).toLocaleTimeString('pt-BR')}</p>
-                  </div>
+            {jobs.slice(0, 4).map((job) => (
+              <div key={job.id} className="flex items-center gap-3">
+                <div className={`w-2 h-2 rounded-full ${jobStatusColors[job.status] || 'bg-slate-500'}`} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-slate-300 truncate">{job.tipo} — {job.status}</p>
+                  <p className="text-xs text-slate-500">{new Date(job.createdAt).toLocaleTimeString('pt-BR')}</p>
                 </div>
-              );
-            })}
+              </div>
+            ))}
+            {jobs.length === 0 && (
+              <p className="text-sm text-slate-500 text-center py-4">Nenhum job encontrado</p>
+            )}
           </div>
         </div>
       </div>
@@ -152,11 +201,17 @@ export default function DashboardPage() {
           <h3 className="font-display font-semibold text-lg text-white">Processos Recentes</h3>
           <a href="/processos" className="text-sm text-brand-400 hover:text-brand-300 transition-colors">Ver todos →</a>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {mockProcessos.map((processo) => (
-            <ProcessCard key={processo.id} processo={processo} />
-          ))}
-        </div>
+        {processos.length === 0 ? (
+          <div className="glass rounded-2xl p-8 text-center">
+            <p className="text-slate-400">Nenhum processo encontrado</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {processos.map((processo) => (
+              <ProcessCard key={processo.id} processo={processo} />
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="glass rounded-2xl p-6">

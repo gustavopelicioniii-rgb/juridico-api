@@ -12,6 +12,7 @@ import {
   Scale,
 } from 'lucide-react';
 import { socketService } from './services/socket';
+import { authService } from './services/api';
 import type { Notification } from './types/api';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
@@ -73,7 +74,14 @@ function Sidebar() {
             <p className="text-sm font-medium text-slate-200 truncate">João Direito</p>
             <p className="text-xs text-slate-500">Administrador</p>
           </div>
-          <button className="p-2 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors">
+          <button
+            onClick={() => {
+              authService.logout();
+              window.location.href = '/login';
+            }}
+            className="p-2 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+            title="Sair"
+          >
             <LogOut className="w-4 h-4" />
           </button>
         </div>

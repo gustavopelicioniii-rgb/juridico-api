@@ -19,19 +19,24 @@ export interface Advogado {
 
 export interface Processo {
   id: string;
-  numero: string;
-  tribunalId: string;
+  /** Campo returned by backend (CNJ format) */
+  numeroProcesso?: string;
+  /** Campo used in legacy mocks / frontend */
+  numero?: string;
+  tribunalId?: string;
   tribunalNome?: string;
   tribunalCodigo?: string;
-  tipo: string;
-  area: string;
-  classe: string;
-  assunto: string;
-  distribuicao: string;
+  tipo?: string;
+  area?: string;
+  classe?: string;
+  assunto?: string;
+  distribuicao?: string;
   relator?: string;
   valorCausa?: number;
-  status: 'MONITORANDO' | 'ARQUIVADO' | 'SUSPENSO' | 'ATIVO';
-  ultimaAtualizacao: string;
+  status: 'MONITORANDO' | 'ARQUIVADO' | 'SUSPENSO' | 'ATIVO' | 'ERRO' | 'ENCERRADO';
+  ultimaAtualizacao?: string;
+  primeiraInstancia?: string;
+  dataAjuizamento?: string;
   createdAt: string;
 }
 
@@ -66,8 +71,8 @@ export interface Monitoramento {
 
 export interface Job {
   id: string;
-  tipo: 'SCRAPE' | 'NOTIFICATION' | 'REFRESH';
-  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  tipo: 'SCRAPE' | 'NOTIFICATION' | 'REFRESH' | 'SCRAPE' | 'NOTIFY' | 'RETRY';
+  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'PENDENTE' | 'PROCESSANDO' | 'CONCLUIDO' | 'FALHO';
   processoId?: string;
   tribunalCodigo?: string;
   tentativas: number;
@@ -87,8 +92,7 @@ export interface Tribunal {
 
 export interface Notification {
   id: string;
-  tipo: 'NOVO_JOB' | 'JOB_COMPLETED' | 'JOB_FAILED' | 'NOVA_MOVIMENTACAO';
-  titulo: string;
+  tipo: 'NOVO_JOB' | 'JOB_COMPLETED' | 'JOB_FAILED' | 'NOVA_MOVIMENTACAO' | 'SCRAPING_COMPLETO' | 'ERRO_SCRAPING' | 'PROCESSO_ATUALIZADO';
   mensagem: string;
   processoId?: string;
   jobId?: string;
@@ -97,10 +101,10 @@ export interface Notification {
 }
 
 export interface DashboardStats {
-  totalProcessos: number;
-  processosAtivos: number;
   totalAdvogados: number;
+  totalProcessos: number;
   jobsPendentes: number;
-  jobsFalhas: number;
+  jobsFalhos: number;
+  monitoramentosAtivos: number;
   totalMovimentacoesHoje: number;
 }
