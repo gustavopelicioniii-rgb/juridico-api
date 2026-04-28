@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Search, Plus, Edit2, Trash2, FileText, Phone, Mail, X, Loader2, ExternalLink, Eye, Search as SearchIcon } from 'lucide-react';
+import { Search, Plus, Edit2, Trash2, FileText, Phone, Mail, X, Loader2, Search as SearchIcon } from 'lucide-react';
 import { advogadoService, processoService } from '../services/api';
 import type { Advogado, Processo } from '../types/api';
 

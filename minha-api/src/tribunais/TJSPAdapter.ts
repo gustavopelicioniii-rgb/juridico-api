@@ -161,7 +161,7 @@ export class TJSPAdapter extends BaseTribunalAdapter {
    */
   async buscarPorOAB(oab: string, nome?: string): Promise<ResultadoBusca> {
     // Valida formato da OAB (2 letras + 6 dígitos + 2 letras)
-    const oabFormatada = oab.replace(/[\.\-]/g, '').toUpperCase();
+    const oabFormatada = oab.replace(/[.-]/g, '').toUpperCase();
     
     if (!/^[A-Z]{2}\d{6}[A-Z]{2}$/.test(oabFormatada) && !/^\d{6,8}$/.test(oabFormatada)) {
       throw new Error(`OAB inválida: ${oab}`);

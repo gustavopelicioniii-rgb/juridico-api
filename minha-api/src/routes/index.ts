@@ -1,10 +1,13 @@
 import { Router, Request, Response } from 'express';
+import { Op } from 'sequelize';
 import Advogado from '../models/Advogado';
 import Tribunal from '../models/Tribunal';
 import Processo from '../models/Processo';
 import Monitoramento from '../models/Monitoramento';
 import Movimentacao from '../models/Movimentacao';
 import Parte from '../models/Parte';
+import Job from '../models/Job';
+import Notification from '../models/Notification';
 import TribunalService from '../services/TribunalService';
 import { authRouter } from './auth';
 import { authMiddleware } from '../middleware/auth';
@@ -13,6 +16,9 @@ const router = Router();
 
 // Rotas de autenticação (públicas)
 router.use('/auth', authRouter);
+
+// Todas as rotas abaixo requerem autenticação
+router.use(authMiddleware);
 
 // ==================== ADVOGADOS ====================
 
@@ -244,8 +250,8 @@ router.get('/processos/:id/movimentacoes', async (req: Request, res: Response) =
     
     if (data_inicio || data_fim) {
       where.data = {};
-      if (data_inicio) where.data.$gte = new Date(data_inicio as string);
-      if (data_fim) where.data.$lte = new Date(data_fim as string);
+      if (data_inicio) where.data[Op.gte] = new Date(data_inicio as string);
+      if (data_fim) where.data[Op.lte] = new Date(data_fim as string);
     }
     
     const offset = (Number(pagina) - 1) * Number(limite);
@@ -344,7 +350,13 @@ router.post('/processos/:id/monitorar', async (req: Request, res: Response) => {
       await existingMonitoramento.update({ intervaloMinutos });
       return res.json({ monitoramento: existingMonitoramento });
     }
-    
+
+    if (!processo.advogadoId) {
+      return res.status(400).json({
+        erro: { codigo: 'ADVOGADO_NAO_ASSOCIADO', mensagem: 'Processo não tem advogado associado.' }
+      });
+    }
+
     const monitoramento = await Monitoramento.create({
       advogadoId: processo.advogadoId,
       processoId: processo.id,
@@ -520,6 +532,150 @@ router.get('/tribunais/:codigo/status', async (req: Request, res: Response) => {
     });
   } catch (error) {
     res.status(500).json({ erro: { codigo: 'STATUS_ERROR', mensagem: 'Erro ao verificar status.' } });
+  }
+});
+
+// ==================== JOBS ====================
+
+router.get('/jobs', async (req: Request, res: Response) => {
+  try {
+    const { status, tipo, limite = 50 } = req.query;
+
+    const where: any = {};
+    if (status) where.status = status;
+    if (tipo) where.tipo = tipo;
+
+    const jobs = await Job.findAll({
+      where,
+      include: [{ model: Processo, as: 'processo' }],
+      order: [['createdAt', 'DESC']],
+      limit: Number(limite),
+    });
+
+    res.json({ jobs });
+  } catch (error) {
+    res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar jobs.' } });
+  }
+});
+
+router.get('/jobs/:id', async (req: Request, res: Response) => {
+  try {
+    const job = await Job.findByPk(req.params.id, {
+      include: [{ model: Processo, as: 'processo' }],
+    });
+
+    if (!job) {
+      return res.status(404).json({ erro: { codigo: 'JOB_NOT_FOUND', mensagem: 'Job não encontrado.' } });
+    }
+
+    res.json({ job });
+  } catch (error) {
+    res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar job.' } });
+  }
+});
+
+router.post('/jobs/:id/retry', async (req: Request, res: Response) => {
+  try {
+    const job = await Job.findByPk(req.params.id);
+
+    if (!job) {
+      return res.status(404).json({ erro: { codigo: 'JOB_NOT_FOUND', mensagem: 'Job não encontrado.' } });
+    }
+
+    await job.update({ status: 'PENDENTE', tentativas: 0, erro: undefined });
+
+    res.json({ job });
+  } catch (error) {
+    res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao retry job.' } });
+  }
+});
+
+// ==================== NOTIFICATIONS ====================
+
+router.get('/notifications', async (req: Request, res: Response) => {
+  try {
+    const { advogadoId, lida, limite = 50 } = req.query;
+
+    const where: any = {};
+    if (advogadoId) where.advogadoId = advogadoId;
+    if (lida !== undefined) where.lida = lida === 'true';
+
+    const notifications = await Notification.findAll({
+      where,
+      order: [['createdAt', 'DESC']],
+      limit: Number(limite),
+    });
+
+    res.json({ notifications });
+  } catch (error) {
+    res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar notifications.' } });
+  }
+});
+
+router.put('/notifications/:id/read', async (req: Request, res: Response) => {
+  try {
+    const notification = await Notification.findByPk(req.params.id);
+
+    if (!notification) {
+      return res.status(404).json({ erro: { codigo: 'NOTIFICATION_NOT_FOUND', mensagem: 'Notificação não encontrada.' } });
+    }
+
+    await notification.update({ lida: true });
+    res.json({ notification });
+  } catch (error) {
+    res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao marcar notification.' } });
+  }
+});
+
+router.put('/notifications/read-all', async (req: Request, res: Response) => {
+  try {
+    const { advogadoId } = req.query;
+
+    const where: any = { lida: false };
+    if (advogadoId) where.advogadoId = advogadoId;
+
+    await Notification.update({ lida: true }, { where });
+    res.json({ mensagem: 'Todas marcadas como lidas.' });
+  } catch (error) {
+    res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao marcar notifications.' } });
+  }
+});
+
+// ==================== DASHBOARD ====================
+
+router.get('/dashboard/stats', async (req: Request, res: Response) => {
+  try {
+    const { advogadoId } = req.query;
+
+    const whereAdv: any = { ativo: true };
+    if (advogadoId) whereAdv.id = advogadoId;
+
+    const [totalAdvogados, totalProcessos, jobsPendentes, jobsFalhos, monitoramentosAtivos] = await Promise.all([
+      Advogado.count({ where: whereAdv }),
+      Processo.count({ where: advogadoId ? { advogadoId: String(advogadoId) } : {} }),
+      Job.count({ where: { status: 'PENDENTE' } }),
+      Job.count({ where: { status: 'FALHO' } }),
+      Monitoramento.count({ where: { ativo: true } }),
+    ]);
+
+    const totalMovimentacoesHoje = await Movimentacao.count({
+      where: {
+        createdAt: {
+          [Op.gte]: new Date(new Date().setHours(0, 0, 0, 0)),
+        },
+      },
+    });
+
+    res.json({
+      totalAdvogados,
+      totalProcessos,
+      jobsPendentes,
+      jobsFalhos,
+      monitoramentosAtivos,
+      totalMovimentacoesHoje,
+    });
+  } catch (error) {
+    res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar estatísticas.' } });
   }
 });
 

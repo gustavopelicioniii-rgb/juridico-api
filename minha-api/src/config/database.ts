@@ -78,11 +78,11 @@ export const connectDatabase = async (): Promise<void> => {
   try {
     await sequelize.authenticate();
     console.log('✅ Database connection established successfully.');
-    
-    if (process.env.NODE_ENV !== 'production') {
-      await sequelize.sync({ alter: true });
-      console.log('✅ Database synchronized (development mode).');
-    }
+
+    // Roda migrations pendentes
+    const { migrator } = await import('../migrations');
+    await migrator.up();
+    console.log('✅ Migrations applied.');
   } catch (error) {
     console.error('❌ Unable to connect to the database:', error);
     throw error;

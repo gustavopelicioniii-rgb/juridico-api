@@ -14,7 +14,10 @@ services:
       - DATABASE_URL=postgres://postgres:postgres@postgres:5432/juridico
       - REDIS_URL=redis://redis:6379
       - JWT_SECRET=${JWT_SECRET:-sua-chave-secreta-muito-segura}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-}
       - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:3000}
+      - DATAJUD_API_KEY=${DATAJUD_API_KEY:-}
+      - DATAJUD_MOCK=${DATAJUD_MOCK:-false}
       - TJSP_API_KEY=${TJSP_API_KEY:-}
       - TWOCAPTCHA_API_KEY=${TWOCAPTCHA_API_KEY:-}
     depends_on:
@@ -68,6 +71,10 @@ services:
       - NODE_ENV=production
       - DATABASE_URL=postgres://postgres:postgres@postgres:5432/juridico
       - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET:-sua-chave-secreta-muito-segura}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-}
+      - DATAJUD_API_KEY=${DATAJUD_API_KEY:-}
+      - DATAJUD_MOCK=${DATAJUD_MOCK:-false}
       - TJSP_API_KEY=${TJSP_API_KEY:-}
       - TWOCAPTCHA_API_KEY=${TWOCAPTCHA_API_KEY:-}
     depends_on:

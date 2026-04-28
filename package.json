@@ -1,0 +1,13 @@
+{
+  "name": "juridico-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "devDependencies": {
+    "husky": "^9.0.0",
+    "lint-staged": "^15.0.0"
+  },
+  "lint-staged": {
+    "minha-api/src/**/*.ts": ["eslint --fix"],
+    "dashboard/src/**/*.{ts,tsx}": ["eslint --fix"]
+  }
+}

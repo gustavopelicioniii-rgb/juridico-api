@@ -11,6 +11,8 @@ export interface AuthPayload {
   userId: string;
   advogadoId?: string;
   role: 'ADMIN' | 'USER' | 'SYSTEM';
+  type?: 'access' | 'refresh';
+  jti?: string;
   iat?: number;
   exp?: number;
 }
@@ -23,21 +25,58 @@ declare global {
   }
 }
 
-const JWT_SECRET = process.env.JWT_SECRET || 'sua-chave-secreta-muito-segura';
-const JWT_EXPIRES_IN_SECONDS = 86400; // 24 hours
+const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET;
+
+if (!JWT_SECRET) {
+  throw new Error('FATAL: JWT_SECRET environment variable is required but not set. Set it in production!');
+}
+
+const ACCESS_EXPIRES_IN_SECONDS = 3600;   // 1 hour
+const REFRESH_EXPIRES_IN_SECONDS = 604800; // 7 days
 
 /**
- * Gera token JWT
+ * Gera token de acesso JWT
  */
-export function generateToken(payload: Omit<AuthPayload, 'iat' | 'exp'>): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN_SECONDS });
+export function generateToken(payload: Omit<AuthPayload, 'iat' | 'exp' | 'type'>): string {
+  const jti = crypto.randomUUID();
+  return jwt.sign(
+    { ...payload, type: 'access', jti },
+    JWT_SECRET!,
+    { expiresIn: ACCESS_EXPIRES_IN_SECONDS }
+  );
+}
+
+/**
+ * Gera refresh token JWT (longa duração)
+ */
+export function generateRefreshToken(payload: Omit<AuthPayload, 'iat' | 'exp' | 'type'>): string {
+  if (!JWT_REFRESH_SECRET) {
+    throw new Error('FATAL: JWT_REFRESH_SECRET environment variable is required. Set it in production!');
+  }
+  const jti = crypto.randomUUID();
+  return jwt.sign(
+    { ...payload, type: 'refresh', jti },
+    JWT_REFRESH_SECRET,
+    { expiresIn: REFRESH_EXPIRES_IN_SECONDS }
+  );
 }
 
 /**
  * Verifica token JWT
  */
-export function verifyToken(token: string): AuthPayload {
-  return jwt.verify(token, JWT_SECRET) as AuthPayload;
+export function verifyToken(token: string, isRefresh = false): AuthPayload {
+  const secret = isRefresh ? (JWT_REFRESH_SECRET || JWT_SECRET!) : JWT_SECRET!;
+  const decoded = jwt.verify(token, secret) as AuthPayload;
+
+  if (isRefresh && decoded.type !== 'refresh') {
+    throw new Error('INVALID_REFRESH_TOKEN_TYPE');
+  }
+  if (!isRefresh && decoded.type === 'refresh') {
+    throw new Error('REFRESH_TOKEN_NOT_ALLOWED_HERE');
+  }
+
+  return decoded;
 }
 
 /**
@@ -49,7 +88,7 @@ export function authMiddleware(
   next: NextFunction
 ): void {
   const authHeader = req.headers.authorization;
-  
+
   if (!authHeader) {
     res.status(401).json({
       erro: {
@@ -59,9 +98,9 @@ export function authMiddleware(
     });
     return;
   }
-  
+
   const parts = authHeader.split(' ');
-  
+
   if (parts.length !== 2 || parts[0] !== 'Bearer') {
     res.status(401).json({
       erro: {
@@ -71,16 +110,16 @@ export function authMiddleware(
     });
     return;
   }
-  
+
   const token = parts[1];
-  
+
   try {
-    const decoded = verifyToken(token);
+    const decoded = verifyToken(token, false);
     req.user = decoded;
     next();
   } catch (error: any) {
     logger.warn('Tentativa de acesso com token inválido:', { error: error.message });
-    
+
     if (error.name === 'TokenExpiredError') {
       res.status(401).json({
         erro: {
@@ -90,7 +129,7 @@ export function authMiddleware(
       });
       return;
     }
-    
+
     res.status(401).json({
       erro: {
         codigo: 'INVALID_TOKEN',
@@ -109,23 +148,23 @@ export function optionalAuthMiddleware(
   next: NextFunction
 ): void {
   const authHeader = req.headers.authorization;
-  
+
   if (!authHeader) {
     next();
     return;
   }
-  
+
   const parts = authHeader.split(' ');
-  
+
   if (parts.length === 2 && parts[0] === 'Bearer') {
     try {
-      const decoded = verifyToken(parts[1]);
+      const decoded = verifyToken(parts[1], false);
       req.user = decoded;
     } catch {
       // Token inválido, mas continuamos sem usuário
     }
   }
-  
+
   next();
 }
 
@@ -143,7 +182,7 @@ export function requireRole(...roles: AuthPayload['role'][]) {
       });
       return;
     }
-    
+
     if (!roles.includes(req.user.role)) {
       res.status(403).json({
         erro: {
@@ -153,14 +192,7 @@ export function requireRole(...roles: AuthPayload['role'][]) {
       });
       return;
     }
-    
+
     next();
   };
-}
-
-/**
- * Gera token de refresh (longa duração)
- */
-export function generateRefreshToken(payload: Omit<AuthPayload, 'iat' | 'exp'>): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: 604800 }); // 7 days in seconds
 }

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Search, Filter, Plus, RefreshCw, MoreVertical, Eye, Trash2, ExternalLink } from 'lucide-react';
+import { Search, Plus, RefreshCw, Eye, Trash2 } from 'lucide-react';
 import type { Processo } from '../types/api';
 
 const mockProcessos: Processo[] = [

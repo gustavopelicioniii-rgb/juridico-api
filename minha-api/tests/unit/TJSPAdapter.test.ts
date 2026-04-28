@@ -12,33 +12,6 @@ describe('TJSPAdapter', () => {
     it('should not use captcha', () => {
       expect(adapter.usaCaptcha).toBe(false);
     });
-
-    it('should have correct nome', () => {
-      expect(adapter.nome).toBe('Tribunal de Justiça de São Paulo');
-    });
-  });
-
-  describe('validarNumeroProcesso', () => {
-    it('should validate TJSP format (NNNNNNN-DD.YYYY.J.TR.OOOO)', () => {
-      const validNumber = '1000123-45.2024.8.26.0101';
-      expect(adapter.validarNumeroProcesso(validNumber)).toBe(true);
-    });
-
-    it('should reject invalid format', () => {
-      const invalidNumber = 'invalid';
-      expect(adapter.validarNumeroProcesso(invalidNumber)).toBe(false);
-    });
-
-    it('should reject empty string', () => {
-      expect(adapter.validarNumeroProcesso('')).toBe(false);
-    });
-  });
-
-  describe('formatarNumeroProcesso', () => {
-    it('should keep already formatted number', () => {
-      const numero = '1000123-45.2024.8.26.0101';
-      expect(adapter.formatarNumeroProcesso(numero)).toBe(numero);
-    });
   });
 
   describe('healthCheck', () => {

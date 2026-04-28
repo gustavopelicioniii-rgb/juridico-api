@@ -25,15 +25,6 @@ interface TJMGMovimentacao {
   descricao: string;
 }
 
-interface TJMGProcesso {
-  numero: string;
-  classe?: string;
-  assunto?: string;
-  distribuicao?: string;
-  partes?: TJMGParte[];
-  movs?: TJMGMovimentacao[];
-}
-
 export class TJMGAdapter extends BaseTribunalAdapter {
   codigo = 'TJMG';
   usaCaptcha = true;
@@ -286,7 +277,7 @@ export class TJMGAdapter extends BaseTribunalAdapter {
     // Implementação básica de parsing HTML
     // Em produção, usaria cheerio ou DOM parser mais robusto
     
-    const numeroMatch = html.match(/Número do Processo:\s*([0-9\.\-]+)/);
+    const numeroMatch = html.match(/Número do Processo:\s*([0-9.-]+)/);
     const classeMatch = html.match(/Classe:\s*([^<]+)/);
     const assuntoMatch = html.match(/Assunto:\s*([^<]+)/);
     
@@ -338,7 +329,7 @@ export class TJMGAdapter extends BaseTribunalAdapter {
   /**
    * Busca por OAB (não suportado pelo TJ-MG de forma direta)
    */
-  async buscarPorOAB(oab: string, nome?: string): Promise<ResultadoBusca> {
+  async buscarPorOAB(_oab: string, _nome?: string): Promise<ResultadoBusca> {
     // TJ-MG não tem endpoint público para busca por OAB
     // O usuário precisa saber o número do processo
     logger.warn('TJ-MG não suporta busca por OAB diretamente');

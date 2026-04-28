@@ -1,15 +1,4 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
-import type {
-  User,
-  Advogado,
-  Processo,
-  Movimentacao,
-  Monitoramento,
-  Job,
-  Tribunal,
-  Notification,
-  DashboardStats,
-} from '../types/api';
 
 const api = axios.create({
   baseURL: '/api/v1',
@@ -29,6 +18,7 @@ api.interceptors.response.use(
   async (error: AxiosError) => {
     if (error.response?.status === 401) {
       localStorage.removeItem('token');
+      localStorage.removeItem('refreshToken');
       window.location.href = '/login';
     }
     return Promise.reject(error);
@@ -36,10 +26,23 @@ api.interceptors.response.use(
 );
 
 export const authService = {
-  login: async (oab: string) => {
-    const { data } = await api.post<{ accessToken: string; refreshToken: string; advogado: User }>('/auth/login', {
-      oab,
-    });
+  login: async (oab: string, senha: string) => {
+    const { data } = await api.post<{
+      accessToken: string;
+      refreshToken: string;
+      advogado: { id: string; oab: string; nome: string; email?: string };
+    }>('/auth/login', { oab, senha });
+    localStorage.setItem('token', data.accessToken);
+    localStorage.setItem('refreshToken', data.refreshToken);
+    return data;
+  },
+
+  register: async (oab: string, nome: string, email: string, senha: string) => {
+    const { data } = await api.post<{
+      accessToken: string;
+      refreshToken: string;
+      advogado: { id: string; oab: string; nome: string; email?: string };
+    }>('/auth/register', { oab, nome, email, senha });
     localStorage.setItem('token', data.accessToken);
     localStorage.setItem('refreshToken', data.refreshToken);
     return data;
@@ -48,40 +51,42 @@ export const authService = {
   logout: () => {
     localStorage.removeItem('token');
     localStorage.removeItem('refreshToken');
-  },
-
-  getMe: async () => {
-    const { data } = await api.get<User>('/auth/me');
-    return data;
+    api.post('/auth/logout').catch(() => {});
   },
 
   refreshToken: async () => {
     const refreshToken = localStorage.getItem('refreshToken');
     if (!refreshToken) throw new Error('No refresh token');
-    const { data } = await api.post('/auth/refresh', { refreshToken });
-    localStorage.setItem('token', data.token);
+    const { data } = await api.post<{ accessToken: string; refreshToken: string }>('/auth/refresh', { refreshToken });
+    localStorage.setItem('token', data.accessToken);
+    localStorage.setItem('refreshToken', data.refreshToken);
+    return data;
+  },
+
+  getMe: async () => {
+    const { data } = await api.get<{ id: string; oab: string; nome: string; email?: string; role: string }>('/auth/me');
     return data;
   },
 };
 
 export const advogadoService = {
   getAll: async () => {
-    const { data } = await api.get<{ advogados: Advogado[] }>('/advogados');
+    const { data } = await api.get<{ advogados: any[] }>('/advogados');
     return data.advogados;
   },
 
   getById: async (id: string) => {
-    const { data } = await api.get<{ advogado: Advogado }>(`/advogados/${id}`);
+    const { data } = await api.get<{ advogado: any }>(`/advogados/${id}`);
     return data.advogado;
   },
 
-  create: async (advogado: Omit<Advogado, 'id' | 'createdAt'>) => {
-    const { data } = await api.post<{ advogado: Advogado }>('/advogados', advogado);
+  create: async (advogado: any) => {
+    const { data } = await api.post<{ advogado: any }>('/advogados', advogado);
     return data.advogado;
   },
 
-  update: async (id: string, advogado: Partial<Advogado>) => {
-    const { data } = await api.put<{ advogado: Advogado }>(`/advogados/${id}`, advogado);
+  update: async (id: string, advogado: Partial<any>) => {
+    const { data } = await api.put<{ advogado: any }>(`/advogados/${id}`, advogado);
     return data.advogado;
   },
 
@@ -90,64 +95,61 @@ export const advogadoService = {
   },
 
   getProcessos: async (id: string) => {
-    const { data } = await api.get<Processo[]>(`/advogados/${id}/processos`);
+    const { data } = await api.get<any[]>(`/advogados/${id}/processos`);
     return data;
   },
 };
 
 export const processoService = {
   getAll: async (params?: { page?: number; limit?: number; tribunalId?: string }) => {
-    const { data } = await api.get<{ processos: Processo[]; total: number }>('/processos', { params });
+    const { data } = await api.get<{ processos: any[]; total: number }>('/processos', { params });
     return data;
   },
 
   getById: async (id: string) => {
-    const { data } = await api.get<Processo>(`/processos/${id}`);
+    const { data } = await api.get<any>(`/processos/${id}`);
     return data;
   },
 
   search: async (tribunalCodigo: string, numero: string) => {
-    const { data } = await api.post<Processo>(`/tribunais/${tribunalCodigo}/buscar`, { numero });
+    const { data } = await api.post<any>(`/tribunais/${tribunalCodigo}/buscar`, { numero });
     return data;
   },
 
   searchByOAB: async (tribunalCodigo: string, oab: string, uf: string) => {
-    const { data } = await api.post<Processo[]>(`/tribunais/${tribunalCodigo}/buscar-oab`, { oab, uf });
-    return data;
+    const { data } = await api.post<{ processos: any[] }>(`/tribunais/${tribunalCodigo}/buscar-oab`, { oab, uf });
+    return data.processos;
   },
 
   refresh: async (tribunalCodigo: string, numero: string) => {
-    const { data } = await api.post<Job>(`/tribunais/${tribunalCodigo}/processos/${numero}/refresh`);
+    const { data } = await api.post<any>(`/tribunais/${tribunalCodigo}/processos/${numero}/refresh`);
     return data;
   },
 
   getMovimentacoes: async (id: string) => {
-    const { data } = await api.get<Movimentacao[]>(`/processos/${id}/movimentacoes`);
+    const { data } = await api.get<any[]>(`/processos/${id}/movimentacoes`);
     return data;
   },
 
   getNovasMovimentacoes: async (id: string) => {
-    const { data } = await api.get<Movimentacao[]>(`/processos/${id}/movimentacoes/novas`);
+    const { data } = await api.get<any[]>(`/processos/${id}/movimentacoes/novas`);
     return data;
   },
 
   getPartes: async (id: string) => {
-    const { data } = await api.get(`/processos/${id}/partes`);
+    const { data } = await api.get<any>(`/processos/${id}/partes`);
     return data;
   },
 };
 
 export const monitoramentoService = {
   getAll: async (params?: { advogadoId?: string; ativo?: boolean }) => {
-    const { data } = await api.get<Monitoramento[]>('/monitoramentos', { params });
+    const { data } = await api.get<any[]>('/monitoramentos', { params });
     return data;
   },
 
   create: async (processoId: string, advogadoId: string, frequencia: 'DIARIA' | 'SEMANAL' | 'MENSAL') => {
-    const { data } = await api.post<Monitoramento>(`/processos/${processoId}/monitorar`, {
-      advogadoId,
-      frequencia,
-    });
+    const { data } = await api.post<any>(`/processos/${processoId}/monitorar`, { advogadoId, frequencia });
     return data;
   },
 
@@ -158,37 +160,37 @@ export const monitoramentoService = {
 
 export const tribunalService = {
   getAll: async () => {
-    const { data } = await api.get<Tribunal[]>('/tribunais');
+    const { data } = await api.get<any[]>('/tribunais');
     return data;
   },
 
   getStatus: async (codigo: string) => {
-    const { data } = await api.get<{ online: boolean; responseTime: number }>(`/tribunais/${codigo}/status`);
+    const { data } = await api.get<any>(`/tribunais/${codigo}/status`);
     return data;
   },
 };
 
 export const jobService = {
-  getAll: async (params?: { status?: Job['status']; tipo?: Job['tipo'] }) => {
-    const { data } = await api.get<Job[]>('/jobs', { params });
-    return data;
+  getAll: async (params?: { status?: string; tipo?: string; limite?: number }) => {
+    const { data } = await api.get<{ jobs: any[] }>('/jobs', { params });
+    return data.jobs;
   },
 
   getById: async (id: string) => {
-    const { data } = await api.get<Job>(`/jobs/${id}`);
-    return data;
+    const { data } = await api.get<{ job: any }>(`/jobs/${id}`);
+    return data.job;
   },
 
   retry: async (id: string) => {
-    const { data } = await api.post<Job>(`/jobs/${id}/retry`);
-    return data;
+    const { data } = await api.post<{ job: any }>(`/jobs/${id}/retry`);
+    return data.job;
   },
 };
 
 export const notificationService = {
-  getAll: async () => {
-    const { data } = await api.get<Notification[]>('/notifications');
-    return data;
+  getAll: async (params?: { lida?: boolean; limite?: number }) => {
+    const { data } = await api.get<{ notifications: any[] }>('/notifications', { params });
+    return data.notifications;
   },
 
   markAsRead: async (id: string) => {
@@ -201,24 +203,15 @@ export const notificationService = {
 };
 
 export const dashboardService = {
-  getStats: async (): Promise<DashboardStats> => {
-    const [processos, advogados, jobs, tribunais] = await Promise.all([
-      processoService.getAll(),
-      advogadoService.getAll(),
-      jobService.getAll({ status: 'PENDING' }),
-      tribunalService.getAll(),
-    ]);
-
-    const processosAtivos = processos.processos.filter((p) => p.status === 'ATIVO').length;
-    const jobsFalhas = jobs.filter((j) => j.status === 'FAILED').length;
-
-    return {
-      totalProcessos: processos.processos.length,
-      processosAtivos,
-      totalAdvogados: advogados.length,
-      jobsPendentes: jobs.length,
-      jobsFalhas,
-      totalMovimentacoesHoje: 0,
-    };
+  getStats: async () => {
+    const { data } = await api.get<{
+      totalAdvogados: number;
+      totalProcessos: number;
+      jobsPendentes: number;
+      jobsFalhos: number;
+      monitoramentosAtivos: number;
+      totalMovimentacoesHoje: number;
+    }>('/dashboard/stats');
+    return data;
   },
 };

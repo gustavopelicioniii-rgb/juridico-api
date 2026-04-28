@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, Link } from 'react-router-dom';
 import { Scale, Loader2 } from 'lucide-react';
 import { authService } from '../services/api';
 
 export default function LoginPage() {
   const [oab, setOab] = useState('');
+  const [senha, setSenha] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -19,10 +20,10 @@ export default function LoginPage() {
     setError('');
 
     try {
-      await authService.login(oab);
+      await authService.login(oab, senha);
       window.location.href = '/';
     } catch {
-      setError('OAB não encontrada. Tente novamente.');
+      setError('Credenciais inválidas. Verifique OAB e senha.');
     } finally {
       setIsLoading(false);
     }
@@ -62,7 +63,18 @@ export default function LoginPage() {
                 required
                 className="w-full px-4 py-3 bg-dark-200 border border-brand-900/50 rounded-xl text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-brand-500/50 focus:ring-2 focus:ring-brand-500/20 transition-all"
               />
-              <p className="mt-2 text-xs text-slate-500">Ex: SP123456</p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">Senha</label>
+              <input
+                type="password"
+                value={senha}
+                onChange={(e) => setSenha(e.target.value)}
+                placeholder="Sua senha"
+                required
+                className="w-full px-4 py-3 bg-dark-200 border border-brand-900/50 rounded-xl text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-brand-500/50 focus:ring-2 focus:ring-brand-500/20 transition-all"
+              />
             </div>
 
             <button
@@ -79,6 +91,13 @@ export default function LoginPage() {
                 'Entrar'
               )}
             </button>
+
+            <p className="text-center text-sm text-slate-400">
+              Não tem conta?{' '}
+              <Link to="/register" className="text-brand-400 hover:text-brand-300 font-medium">
+                Cadastre-se
+              </Link>
+            </p>
           </form>
         </div>
       </div>

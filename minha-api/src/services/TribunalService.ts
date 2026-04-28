@@ -3,13 +3,14 @@
  * Orquestra a busca de processos usando os adaptadores e salva no banco
  */
 
-import { Op } from 'sequelize';
-import { registry, DadosProcesso, ITribunalAdapter } from '../tribunais';
+import { registry, DadosProcesso } from '../tribunais';
 import Tribunal from '../models/Tribunal';
 import Processo from '../models/Processo';
 import Parte from '../models/Parte';
 import Movimentacao from '../models/Movimentacao';
 import Job from '../models/Job';
+import { sequelize } from '../config/database';
+import { Transaction } from 'sequelize';
 import logger from '../config/logger';
 
 export interface ResultadoBuscaProcesso {
@@ -22,6 +23,7 @@ export interface ResultadoBuscaProcesso {
 class TribunalService {
   /**
    * Busca um processo pelo número e salva/atualiza no banco
+   * Usa transação para garantir atomicidade em partes + movimentações
    */
   async buscarESalvarProcesso(
     numeroProcesso: string,
@@ -29,91 +31,111 @@ class TribunalService {
     advogadoId?: string
   ): Promise<ResultadoBuscaProcesso> {
     const adapter = registry.get(tribunalCodigo);
-    
+
     if (!adapter) {
       throw new Error(`Tribunal não suportado: ${tribunalCodigo}`);
     }
-    
+
     logger.info(`Buscando processo ${numeroProcesso} no ${tribunalCodigo}`);
-    
-    // Busca dados do processo via adapter
+
     const dadosProcesso = await adapter.buscarProcesso(numeroProcesso);
-    
-    // Busca tribunal no banco
-    const tribunal = await Tribunal.findOne({
-      where: { codigo: tribunalCodigo },
-    });
-    
+
+    const tribunal = await Tribunal.findOne({ where: { codigo: tribunalCodigo } });
+
     if (!tribunal) {
       throw new Error(`Tribunal não encontrado no banco: ${tribunalCodigo}`);
     }
-    
-    // Verifica se processo já existe
-    const processoExistente = await Processo.findOne({
-      where: { numeroProcesso: dadosProcesso.numeroProcesso },
+
+    return sequelize.transaction(async (t: Transaction) => {
+      const processoExistente = await Processo.findOne({
+        where: { numeroProcesso: dadosProcesso.numeroProcesso },
+        transaction: t,
+      });
+
+      const ehNovo = !processoExistente;
+      let processo: Processo;
+
+      if (ehNovo) {
+        processo = await Processo.create(
+          {
+            numeroProcesso: dadosProcesso.numeroProcesso,
+            tribunalId: tribunal.id,
+            advogadoId: advogadoId || '00000000-0000-0000-0000-000000000000',
+            status: 'MONITORANDO',
+            classe: dadosProcesso.classe,
+            classeCodigo: dadosProcesso.classeCodigo,
+            assunto: dadosProcesso.assunto,
+            assuntoPrincipal: dadosProcesso.assuntoPrincipal,
+            instancia: dadosProcesso.instancia || 'PRIMEIRA',
+            primeiraInstancia: dadosProcesso.dataDistribuicao,
+            dataAjuizamento: dadosProcesso.dataAjuizamento,
+            valorCausa: dadosProcesso.valorCausa,
+            orgaoJulgador: dadosProcesso.orgaoJulgador,
+            orgaoJulgadorCodigo: dadosProcesso.orgaoJulgadorCodigo,
+            nivelSigilo: dadosProcesso.nivelSigilo,
+            sistema: dadosProcesso.sistema,
+            formato: dadosProcesso.formato,
+            ultimaMovimentacao:
+              dadosProcesso.movimentacoes.length > 0
+                ? dadosProcesso.movimentacoes[dadosProcesso.movimentacoes.length - 1].data
+                : undefined,
+            dadosOriginais: dadosProcesso.dadosOriginais,
+          },
+          { transaction: t }
+        );
+
+        logger.info(`Novo processo criado: ${processo.numeroProcesso}`);
+      } else {
+        processo = processoExistente;
+        await processo.update(
+          {
+            classe: dadosProcesso.classe || processo.classe,
+            assunto: dadosProcesso.assunto || processo.assunto,
+            assuntoPrincipal: dadosProcesso.assuntoPrincipal || processo.assuntoPrincipal,
+            ultimaMovimentacao:
+              dadosProcesso.movimentacoes.length > 0
+                ? dadosProcesso.movimentacoes[dadosProcesso.movimentacoes.length - 1].data
+                : processo.ultimaMovimentacao,
+            valorCausa: dadosProcesso.valorCausa || processo.valorCausa,
+            orgaoJulgador: dadosProcesso.orgaoJulgador || processo.orgaoJulgador,
+            nivelSigilo: dadosProcesso.nivelSigilo ?? processo.nivelSigilo,
+            dadosOriginais: dadosProcesso.dadosOriginais,
+          },
+          { transaction: t }
+        );
+
+        logger.info(`Processo atualizado: ${processo.numeroProcesso}`);
+      }
+
+      // Salva/atualiza partes atomicamente
+      await this.salvarPartes(processo.id, dadosProcesso.partes, t);
+
+      // Salva movimentações atomicamente
+      const resultadoMovimentacoes = await this.salvarMovimentacoes(
+        processo.id,
+        dadosProcesso.movimentacoes,
+        t
+      );
+
+      return {
+        processo,
+        ehNovo,
+        totalMovimentacoes: dadosProcesso.movimentacoes.length,
+        novasMovimentacoes: resultadoMovimentacoes.novas,
+      };
     });
-    
-    const ehNovo = !processoExistente;
-    let processo: Processo;
-    
-    if (ehNovo) {
-      // Cria novo processo
-      processo = await Processo.create({
-        numeroProcesso: dadosProcesso.numeroProcesso,
-        tribunalId: tribunal.id,
-        advogadoId: advogadoId || '00000000-0000-0000-0000-000000000000', // UUID placeholder
-        status: 'MONITORANDO',
-        classe: dadosProcesso.classe,
-        assunto: dadosProcesso.assunto,
-        instancia: dadosProcesso.instancia || 'PRIMEIRA',
-        primeiraInstancia: dadosProcesso.dataDistribuicao,
-        ultimaMovimentacao: dadosProcesso.movimentacoes.length > 0
-          ? dadosProcesso.movimentacoes[dadosProcesso.movimentacoes.length - 1].data
-          : undefined,
-        dadosOriginais: dadosProcesso.dadosOriginais,
-      });
-      
-      logger.info(`Novo processo criado: ${processo.numeroProcesso}`);
-    } else {
-      // Atualiza processo existente
-      processo = processoExistente;
-      await processo.update({
-        classe: dadosProcesso.classe || processo.classe,
-        assunto: dadosProcesso.assunto || processo.assunto,
-        ultimaMovimentacao: dadosProcesso.movimentacoes.length > 0
-          ? dadosProcesso.movimentacoes[dadosProcesso.movimentacoes.length - 1].data
-          : processo.ultimaMovimentacao,
-        dadosOriginais: dadosProcesso.dadosOriginais,
-      });
-      
-      logger.info(`Processo atualizado: ${processo.numeroProcesso}`);
-    }
-    
-    // Salva/atualiza partes
-    await this.salvarPartes(processo.id, dadosProcesso.partes);
-    
-    // Salva movimentações (apenas as novas)
-    const resultadoMovimentacoes = await this.salvarMovimentacoes(
-      processo.id,
-      dadosProcesso.movimentacoes
-    );
-    
-    return {
-      processo,
-      ehNovo,
-      totalMovimentacoes: dadosProcesso.movimentacoes.length,
-      novasMovimentacoes: resultadoMovimentacoes.novas,
-    };
   }
-  
+
   /**
-   * Salva partes do processo
+   * Salva partes do processo (dentro de transação)
    */
-  private async salvarPartes(processoId: string, partes: DadosProcesso['partes']): Promise<void> {
-    // Remove partes existentes
-    await Parte.destroy({ where: { processoId } });
-    
-    // Insere novas partes
+  private async salvarPartes(
+    processoId: string,
+    partes: DadosProcesso['partes'],
+    t: Transaction
+  ): Promise<void> {
+    await Parte.destroy({ where: { processoId }, transaction: t });
+
     const partesData = partes.map(p => ({
       processoId,
       nome: p.nome,
@@ -121,48 +143,47 @@ class TribunalService {
       documento: p.documento,
       isAdvogado: p.isAdvogado,
     }));
-    
+
     if (partesData.length > 0) {
-      await Parte.bulkCreate(partesData);
+      await Parte.bulkCreate(partesData, { transaction: t });
     }
   }
-  
+
   /**
-   * Salva movimentações (apenas as que ainda não existem)
+   * Salva movimentações (apenas as que ainda não existem, dentro de transação)
    */
   private async salvarMovimentacoes(
     processoId: string,
-    movimentacoes: DadosProcesso['movimentacoes']
+    movimentacoes: DadosProcesso['movimentacoes'],
+    t: Transaction
   ): Promise<{ novas: number; total: number }> {
-    // Obtém última movimentação registrada
     const ultimaMovimentacao = await Movimentacao.findOne({
       where: { processoId },
       order: [['data', 'DESC']],
+      transaction: t,
     });
-    
+
     const dataUltimaRegistrada = ultimaMovimentacao?.data || new Date(0);
-    
-    // Filtra apenas movimentações novas (mais recentes que a última registrada)
+
     const movimentacoesNovas = movimentacoes.filter(m => m.data > dataUltimaRegistrada);
-    
+
     if (movimentacoesNovas.length === 0) {
       return { novas: 0, total: movimentacoes.length };
     }
-    
-    // Insere novas movimentações
+
     const movimentacoesData = movimentacoesNovas.map(m => ({
       processoId,
       descricao: m.descricao,
       data: m.data,
       origem: m.origem,
       dadosOriginais: m.dadosOriginais,
-      nova: true, // Marca como nova para notificação
+      nova: true,
     }));
-    
-    await Movimentacao.bulkCreate(movimentacoesData);
-    
+
+    await Movimentacao.bulkCreate(movimentacoesData, { transaction: t });
+
     logger.info(`Salvas ${movimentacoesNovas.length} novas movimentações para processo ${processoId}`);
-    
+
     return { novas: movimentacoesNovas.length, total: movimentacoes.length };
   }
   

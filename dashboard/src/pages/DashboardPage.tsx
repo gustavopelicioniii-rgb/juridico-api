@@ -1,18 +1,14 @@
-import { useQuery } from '@tanstack/react-query';
 import {
   FileText,
   Users,
   Activity,
   AlertTriangle,
-  Clock,
-  TrendingUp,
   RefreshCw,
   ArrowUpRight,
   ArrowDownRight,
   Scale,
 } from 'lucide-react';
-import { dashboardService, processoService, jobService } from '../services/api';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
+import { ResponsiveContainer, AreaChart, CartesianGrid, XAxis, YAxis, Tooltip, Area } from 'recharts';
 import type { Processo, Job } from '../types/api';
 
 const mockProcessos: Processo[] = [

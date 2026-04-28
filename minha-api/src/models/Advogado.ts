@@ -6,18 +6,20 @@ interface AdvogadoAttributes {
   oab: string;
   nome: string;
   email?: string;
+  passwordHash?: string;
   ativo: boolean;
   createdAt?: Date;
   updatedAt?: Date;
 }
 
-interface AdvogadoCreationAttributes extends Optional<AdvogadoAttributes, 'id' | 'email' | 'ativo' | 'createdAt' | 'updatedAt'> {}
+interface AdvogadoCreationAttributes extends Optional<AdvogadoAttributes, 'id' | 'email' | 'passwordHash' | 'ativo' | 'createdAt' | 'updatedAt'> {}
 
 class Advogado extends Model<AdvogadoAttributes, AdvogadoCreationAttributes> implements AdvogadoAttributes {
   public id!: string;
   public oab!: string;
   public nome!: string;
   public email?: string;
+  public passwordHash?: string;
   public ativo!: boolean;
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -51,6 +53,10 @@ Advogado.init(
       validate: {
         isEmail: true,
       },
+    },
+    passwordHash: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
     },
     ativo: {
       type: DataTypes.BOOLEAN,

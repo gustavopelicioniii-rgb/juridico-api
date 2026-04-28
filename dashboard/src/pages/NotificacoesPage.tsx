@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Bell, Check, CheckCheck, Trash2, FileText, AlertTriangle, Clock, Loader2 } from 'lucide-react';
+import { Bell, Check, CheckCheck, Trash2, FileText, AlertTriangle, Clock } from 'lucide-react';
 import type { Notification } from '../types/api';
 
 const mockNotifications: Notification[] = [

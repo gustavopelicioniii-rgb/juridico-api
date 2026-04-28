@@ -65,7 +65,7 @@ scrapeQueue.on('completed', (job, result) => {
 export async function agendarScraping(data: ScrapeJobData): Promise<Job<ScrapeJobData>> {
   const job = await scrapeQueue.add(data, {
     priority: data.prioridade || 2,
-    jobId: `${data.tribunalCodigo}-${data.numeroProcesso}-${Date.now()}`,
+    jobId: `${data.tribunalCodigo}-${data.numeroProcesso}`,
   });
   
   logger.info(`Scraping agendado: ${data.numeroProcesso} em ${data.tribunalCodigo}`, { jobId: job.id });

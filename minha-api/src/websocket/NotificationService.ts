@@ -95,9 +95,24 @@ class NotificationService {
       logger.warn('NotificationService não inicializado');
       return;
     }
-    
-    this.io.to(`advogado:${advogadoId}`).emit('notificacao', notificacao);
-    logger.debug(`Notificação enviada para advogado ${advogadoId}`);
+
+    const room = `advogado:${advogadoId}`;
+
+    // Emite tanto o evento unificado quanto o evento específico que o frontend espera
+    this.io.to(room).emit('notificacao', notificacao);
+
+    if (notificacao.tipo === 'NOVA_MOVIMENTACAO') {
+      this.io.to(room).emit('nova-movimentacao', {
+        processoId: notificacao.processoId,
+        movimentacao: notificacao,
+      });
+    } else if (notificacao.tipo === 'SCRAPING_COMPLETO') {
+      this.io.to(room).emit('scraping-completo', { processo: notificacao });
+    } else if (notificacao.tipo === 'ERRO_SCRAPING') {
+      this.io.to(room).emit('erro-scraping', { erro: notificacao.dados.erro });
+    }
+
+    logger.debug(`Notificação enviada para advogado ${advogadoId}: ${notificacao.tipo}`);
   }
   
   /**

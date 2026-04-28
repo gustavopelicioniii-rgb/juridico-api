@@ -1,0 +1,2 @@
+#!/usr/bin/env sh
+(cd minha-api && npx lint-staged) && (cd dashboard && npx lint-staged)

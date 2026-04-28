@@ -8,7 +8,7 @@
 import { BaseTribunalAdapter, DadosProcesso, DadosParte, DadosMovimentacao, ResultadoBusca } from './ITribunalAdapter';
 import logger from '../config/logger';
 import axios from 'axios';
-import cheerio from 'cheerio';
+import { load } from 'cheerio';
 
 interface STJProcesso {
   numero: string;
@@ -65,7 +65,7 @@ export class STJAdapter extends BaseTribunalAdapter {
    * Parseia HTML do STJ
    */
   private parseHtml(html: string, numero: string): DadosProcesso {
-    const $ = cheerio.load(html);
+    const $ = load(html);
     
     const processo: STJProcesso = {
       numero,
@@ -154,7 +154,7 @@ export class STJAdapter extends BaseTribunalAdapter {
   /**
    * Busca por OAB (não suportado pelo STJ)
    */
-  async buscarPorOAB(oab: string, nome?: string): Promise<ResultadoBusca> {
+  async buscarPorOAB(_oab: string, _nome?: string): Promise<ResultadoBusca> {
     logger.warn('STJ não suporta busca por OAB');
     return { processos: [], total: 0 };
   }

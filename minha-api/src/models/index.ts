@@ -6,6 +6,11 @@ import Parte from './Parte';
 import Movimentacao from './Movimentacao';
 import Job from './Job';
 import Monitoramento from './Monitoramento';
+import Notification from './Notification';
+import OABMonitorada from './OABMonitorada';
+
+Advogado.hasMany(Notification, { foreignKey: 'advogadoId', as: 'notifications' });
+Notification.belongsTo(Advogado, { foreignKey: 'advogadoId', as: 'advogado' });
 
 // Define Associations
 Advogado.hasMany(Processo, { foreignKey: 'advogadoId', as: 'processos' });
@@ -38,6 +43,8 @@ export {
   Movimentacao,
   Job,
   Monitoramento,
+  Notification,
+  OABMonitorada,
 };
 
 export default {
@@ -48,4 +55,6 @@ export default {
   Movimentacao,
   Job,
   Monitoramento,
+  Notification,
+  OABMonitorada,
 };

@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
 import {
   LayoutDashboard,
   FileText,
@@ -9,17 +8,13 @@ import {
   Settings,
   LogOut,
   Search,
-  Activity,
-  TrendingUp,
-  AlertTriangle,
-  Clock,
   ChevronRight,
   Scale,
 } from 'lucide-react';
-import { authService, notificationService } from './services/api';
 import { socketService } from './services/socket';
-import type { User, Notification } from './types/api';
+import type { Notification } from './types/api';
 import LoginPage from './pages/LoginPage';
+import RegisterPage from './pages/RegisterPage';
 import DashboardPage from './pages/DashboardPage';
 import ProcessosPage from './pages/ProcessosPage';
 import AdvogadosPage from './pages/AdvogadosPage';
@@ -163,6 +158,7 @@ export default function App() {
     <div className="min-h-screen bg-dark-300">
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/register" element={<RegisterPage />} />
         <Route
           path="/*"
           element={

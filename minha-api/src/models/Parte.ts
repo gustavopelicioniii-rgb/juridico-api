@@ -1,7 +1,7 @@
 import { DataTypes, Model, Optional } from 'sequelize';
 import { sequelize } from '../config/database';
 
-type ParteTipo = 'AUTOR' | 'REU' | 'ADVOGADO' | 'OUTRO';
+type ParteTipo = 'AUTOR' | 'REU' | 'ADVOGADO' | 'OUTRO' | 'LITISDENUNCIANTE' | 'LITISDENUNCIADO' | 'TERCEIRO';
 
 interface ParteAttributes {
   id: string;
@@ -44,7 +44,7 @@ Parte.init(
       },
     },
     tipo: {
-      type: DataTypes.ENUM('AUTOR', 'REU', 'ADVOGADO', 'OUTRO'),
+      type: DataTypes.ENUM('AUTOR', 'REU', 'ADVOGADO', 'OUTRO', 'LITISDENUNCIANTE', 'LITISDENUNCIADO', 'TERCEIRO'),
       allowNull: false,
     },
     nome: {

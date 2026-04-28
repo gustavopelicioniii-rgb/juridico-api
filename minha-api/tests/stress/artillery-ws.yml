@@ -1,0 +1,37 @@
+config:
+  target: "http://localhost:3000"
+  phases:
+    - duration: 60
+      arrivalRate: 5
+      rampTo: 50
+      name: "Ramp-up"
+    - duration: 120
+      arrivalRate: 50
+      name: "Sustain 200 sockets"
+    - duration: 60
+      arrivalRate: 5
+      name: "Ramp-down"
+  socketio:
+    transports: ["websocket"]
+    query:
+      advogadoId: "{{ $randomUUID() }}"
+  ensure:
+    p95: 1500
+    maxErrorRate: 5
+
+scenarios:
+  - name: "Connect, subscribe a process, listen for notifications"
+    engine: socketio
+    flow:
+      - emit:
+          channel: "subscribe"
+          data: "{{ $randomUUID() }}"
+      - think: 5
+      - emit:
+          channel: "subscribe"
+          data: "{{ $randomUUID() }}"
+      - think: 30
+      - emit:
+          channel: "unsubscribe"
+          data: "{{ $randomUUID() }}"
+      - think: 5
