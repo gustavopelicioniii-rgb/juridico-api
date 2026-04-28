@@ -1,0 +1,123 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-brand-50: #f0f4ff;
+  --color-brand-100: #e0e9ff;
+  --color-brand-200: #c7d9ff;
+  --color-brand-300: #a3c2ff;
+  --color-brand-400: #789fff;
+  --color-brand-500: #5478ff;
+  --color-brand-600: #3655f0;
+  --color-brand-700: #2840d1;
+  --color-brand-800: #2436a8;
+  --color-brand-900: #223487;
+  --color-brand-950: #0f1a4a;
+  --color-dark-100: #1e293b;
+  --color-dark-200: #151d2e;
+  --color-dark-300: #0f172a;
+  --color-dark-400: #0a0f1a;
+  --color-dark-500: #050810;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-brand-700) var(--color-dark-200);
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--color-dark-200);
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--color-brand-700);
+  border-radius: 4px;
+}
+
+::selection {
+  background: var(--color-brand-500);
+  color: white;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  background: linear-gradient(135deg, var(--color-dark-300) 0%, var(--color-dark-400) 100%);
+  position: relative;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-image: 
+    radial-gradient(circle at 20% 80%, rgba(84, 120, 255, 0.08) 0%, transparent 50%),
+    radial-gradient(circle at 80% 20%, rgba(54, 85, 240, 0.06) 0%, transparent 50%),
+    radial-gradient(circle at 40% 40%, rgba(120, 159, 255, 0.04) 0%, transparent 30%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+.glass {
+  background: rgba(15, 23, 42, 0.7);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(84, 120, 255, 0.15);
+}
+
+.glass-light {
+  background: rgba(30, 41, 59, 0.5);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(84, 120, 255, 0.1);
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-dark-200) 25%,
+    var(--color-dark-100) 50%,
+    var(--color-dark-200) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+.card-hover {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.card-hover:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 20px 40px rgba(84, 120, 255, 0.15);
+  border-color: rgba(84, 120, 255, 0.3);
+}
+
+.notification-badge {
+  animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse-ring {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}

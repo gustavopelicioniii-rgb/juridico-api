@@ -1,0 +1,88 @@
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: juridico-api
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/juridico
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET:-sua-chave-secreta-muito-segura}
+      - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:3000}
+      - TJSP_API_KEY=${TJSP_API_KEY:-}
+      - TWOCAPTCHA_API_KEY=${TWOCAPTCHA_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - juridico-network
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: juridico-postgres
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=juridico
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - juridico-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: juridico-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - juridico-network
+
+  # Worker para processar filas (opcional)
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: juridico-worker
+    command: ["node", "dist/worker.js"]
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/juridico
+      - REDIS_URL=redis://redis:6379
+      - TJSP_API_KEY=${TJSP_API_KEY:-}
+      - TWOCAPTCHA_API_KEY=${TWOCAPTCHA_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - juridico-network
+
+networks:
+  juridico-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
