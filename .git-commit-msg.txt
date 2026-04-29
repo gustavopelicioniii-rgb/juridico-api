@@ -1,0 +1,16 @@
+feat: multi-tribunal crawler parameterization, resilience, observability and monitoring
+
+Phase 2-7 + C-06 remediation:
+
+- Refactor ESAJCrawler and PJeCrawler to use dynamic baseUrl per tribunal
+  via tribunalCrawlers.ts config (factory pattern)
+- Integrate CaptchaHandler (2Captcha + DataJud fallback) into crawlers
+- Add CrawlerObserver for structured logging and metrics per tribunal
+- Add CrawlerResilience (CircuitBreaker, RetryPolicy, RateLimiter, BrowserPool)
+- Add /api/v1/health/crawlers and /api/v1/metrics/crawlers endpoints
+- Add MonitoringService startup in main API (app.ts), enabled via
+  ENABLE_MONITORING env var, with graceful shutdown
+- Add nome filter parameter to OAB searches for multiple lawyers per OAB
+- Create test suite (ESAJCrawler, PJeCrawler, CaptchaHandler, CrawlerResilience)
+- Enhance CI pipeline with lint, typecheck, test, coverage, security scan
+- Add local validation script and lint-staged pre-commit hooks

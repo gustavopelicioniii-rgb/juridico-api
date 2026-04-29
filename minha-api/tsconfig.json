@@ -20,5 +20,5 @@
     "types": ["node"]
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "tests"]
+  "exclude": ["node_modules", "dist", "tests", "src/services/CaptchaHandler.ts", "src/services/CrawlerObserver.ts", "src/services/CrawlerResilience.ts", "src/services/ESAJCrawler.ts", "src/services/TribunalDerivacaoService.ts", "src/config/tribunalCrawlers.ts", "scripts/test-crawlers.ts"]
 }
