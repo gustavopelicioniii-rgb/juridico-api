@@ -1,18 +1,24 @@
 /* eslint-disable @typescript-eslint/ban-ts-comment */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
- * PJe Crawler - TJSP PJe (Sistema de Juizados Especiais)
+ * PJe Crawler - Sistema PJe (Processo Judicial Eletrônico)
  *
  * O PJe tem uma estrutura diferente do e-SAJ.
  * Usa autenticação e consultas mais complexas.
  *
  * Busca por OAB: consulta processos vinculados ao advogado
+ *
+ * AGORA SUPORTA MÚLTIPLOS TRIBUNAIS - cada tribunal PJe tem seu próprio baseUrl
  */
 
 import puppeteer from 'puppeteer-extra';
 import type { Browser, Page } from 'puppeteer';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import logger from '../config/logger';
+import { getCrawlerConfig } from '../config/tribunalCrawlers';
+import { CaptchaHandler, tribunalExigeCaptcha } from './CaptchaHandler';
+import { registry } from '../tribunais';
+import { CrawlerObserver } from './CrawlerObserver';
 
 puppeteer.use(StealthPlugin());
 
@@ -36,14 +42,42 @@ interface PJeBuscaResult {
     classe: string;
     orgao: string;
     dataAjuizamento: string;
+    nome?: string;
   }>;
   total: number;
 }
 
+export interface PJeCrawlerOptions {
+  tribunalCodigo?: string;
+  baseUrl?: string;
+}
+
 class PJeCrawler {
   private browser: Browser | null = null;
-  private readonly baseUrl = 'https://pje.tjsp.jus.br';
+  private baseUrl: string;
   private timeout = 30000;
+  private tribunalCodigo: string;
+  private usarCaptcha: boolean;
+
+  constructor(options: PJeCrawlerOptions = {}) {
+    this.tribunalCodigo = options.tribunalCodigo || 'TJSP';
+
+    if (options.baseUrl) {
+      this.baseUrl = options.baseUrl;
+    } else {
+      const config = getCrawlerConfig(this.tribunalCodigo);
+      this.baseUrl = config?.baseUrl || 'https://pje.tjsp.jus.br';
+    }
+
+    this.usarCaptcha = tribunalExigeCaptcha(this.tribunalCodigo);
+  }
+
+  /**
+   * Factory method para criar crawler para um tribunal específico
+   */
+  static forTribunal(tribunalCodigo: string): PJeCrawler {
+    return new PJeCrawler({ tribunalCodigo });
+  }
 
   async getBrowser(): Promise<Browser> {
     if (!this.browser || !this.browser.isConnected()) {
@@ -70,11 +104,64 @@ class PJeCrawler {
   }
 
   /**
+   * Tenta resolver CAPTCHA se presente
+   */
+  private async verificarCaptcha(page: Page): Promise<boolean> {
+    if (!this.usarCaptcha) return true;
+
+    const captchaHandler = new CaptchaHandler(page, this.tribunalCodigo);
+    const resultado = await captchaHandler.detectarEResolver();
+
+    if (resultado.resolvido) {
+      logger.info(`[PJe Crawler] CAPTCHA resolvido para ${this.tribunalCodigo}`);
+      return true;
+    }
+
+    logger.warn(`[PJe Crawler] CAPTCHA não resolvido para ${this.tribunalCodigo}: ${resultado.erro}`);
+    return false;
+  }
+
+  /**
+   * Fallback: tenta buscar via DataJud quando crawler falha
+   */
+  private async fallbackDataJud(oab: string, nome?: string): Promise<PJeBuscaResult> {
+    logger.info(`[PJe Crawler] Tentando fallback DataJud para OAB ${oab}${nome ? ` + nome "${nome}"` : ''}`);
+
+    try {
+      const adapter = registry.get(this.tribunalCodigo);
+      if (!adapter) {
+        return { processos: [], total: 0 };
+      }
+
+      const resultado = await adapter.buscarPorOAB(oab, nome);
+
+      return {
+        processos: resultado.processos.map(p => ({
+          numeroProcesso: p.numeroProcesso,
+          classe: '',
+          orgao: '',
+          dataAjuizamento: '',
+        })),
+        total: resultado.total,
+      };
+    } catch (error: any) {
+      logger.error(`[PJe Crawler] Fallback DataJud falhou: ${error.message}`);
+      return { processos: [], total: 0 };
+    }
+  }
+
+  /**
    * Busca processos por OAB no PJe
    */
-  async buscarPorOAB(oab: string): Promise<PJeBuscaResult> {
+  async buscarPorOAB(oab: string, nome?: string): Promise<PJeBuscaResult> {
     const browser = await this.getBrowser();
     const page = await browser.newPage();
+    const traceId = CrawlerObserver.gerarTraceId();
+    const inicio = Date.now();
+
+    let captchaDetectado = false;
+    let captchaResolvido = false;
+    let usandoFallback = false;
 
     try {
       await page.setViewport({ width: 1920, height: 1080 });
@@ -82,7 +169,10 @@ class PJeCrawler {
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'
       );
 
-      logger.info(`PJe Crawler: buscando OAB ${oab}`);
+      logger.info(`PJe Crawler [${this.tribunalCodigo}][${traceId}]: buscando OAB ${oab}${nome ? ` + nome "${nome}"` : ''}`);
+
+      const config = getCrawlerConfig(this.tribunalCodigo);
+      const buscaPath = config?.paths?.buscaOAB || '/pje/consulta/publica/consultaProcesso.xhtml';
 
       // PJe usa consulta pública via URL com parâmetros
       const oabNumero = oab.replace(/\D/g, '').slice(0, 6);
@@ -90,7 +180,7 @@ class PJeCrawler {
 
       // URLs públicas do PJe para consulta
       const urls = [
-        `${this.baseUrl}/pje/consulta/publica/consultaProcesso.xhtml`,
+        `${this.baseUrl}${buscaPath}`,
         `${this.baseUrl}/pje/consulta/consultaProcesso弹性search.xhtml`,
       ];
 
@@ -104,11 +194,38 @@ class PJeCrawler {
       }
 
       if (!loaded) {
-        logger.warn('PJe Crawler: não conseguiu acessar portal');
-        return { processos: [], total: 0 };
+        logger.warn(`PJe Crawler [${this.tribunalCodigo}][${traceId}]: não conseguiu acessar portal`);
+        usandoFallback = true;
+        CrawlerObserver.registrarRequisicao(this.tribunalCodigo, Date.now() - inicio, false, {
+          tipoErro: 'PORTAL_INACESSIVEL',
+          usandoFallback: true,
+        });
+        return this.fallbackDataJud(oab, nome);
       }
 
       await new Promise(r => setTimeout(r, 2000));
+
+      // Verificar e resolver CAPTCHA se presente
+      const captchaHandler = new CaptchaHandler(page, this.tribunalCodigo);
+      const captchaInfo = await captchaHandler.detectar();
+
+      if (captchaInfo.tipo !== 'none') {
+        captchaDetectado = true;
+        const resultadoCaptcha = await captchaHandler.detectarEResolver();
+        captchaResolvido = resultadoCaptcha.resolvido;
+
+        if (!captchaResolvido) {
+          logger.warn(`PJe Crawler [${this.tribunalCodigo}][${traceId}]: CAPTCHA não resolvido`);
+          usandoFallback = true;
+          CrawlerObserver.registrarRequisicao(this.tribunalCodigo, Date.now() - inicio, false, {
+            tipoErro: 'CAPTCHA_NAO_RESOLVIDO',
+            usandoFallback: true,
+            captchaDetectado: true,
+            captchaResolvido: false,
+          });
+          return this.fallbackDataJud(oab, nome);
+        }
+      }
 
       // Preencher campo OAB
       const filled = await page.evaluate((oabStr: string) => {
@@ -178,12 +295,26 @@ class PJeCrawler {
       await page.waitForSelector('table, .resultado, [id*="resultado"]', { timeout: 10000 }).catch(() => null);
 
       const resultados = await this.extrairResultados(page);
-      logger.info(`PJe Crawler: OAB ${oab} retornou ${resultados.length} processos`);
+      logger.info(`PJe Crawler [${this.tribunalCodigo}][${traceId}]: OAB ${oab} retornou ${resultados.length} processos`);
+
+      CrawlerObserver.registrarRequisicao(this.tribunalCodigo, Date.now() - inicio, true, {
+        usandoFallback,
+        captchaDetectado,
+        captchaResolvido,
+      });
 
       return { processos: resultados, total: resultados.length };
     } catch (error: any) {
-      logger.error(`PJe Crawler: erro ao buscar OAB ${oab}: ${error.message}`);
-      return { processos: [], total: 0 };
+      logger.error(`PJe Crawler [${this.tribunalCodigo}][${traceId}]: erro ao buscar OAB ${oab}: ${error.message}`);
+
+      CrawlerObserver.registrarRequisicao(this.tribunalCodigo, Date.now() - inicio, false, {
+        tipoErro: error.message,
+        usandoFallback: true,
+        captchaDetectado,
+        captchaResolvido,
+      });
+
+      return this.fallbackDataJud(oab, nome);
     } finally {
       await page.close();
     }
@@ -203,8 +334,11 @@ class PJeCrawler {
       );
 
       const numFormatado = numeroProcesso.replace(/\D/g, '');
+      const config = getCrawlerConfig(this.tribunalCodigo);
+      const detalhePath = config?.paths?.detalheProcesso || '/pje/consulta/publica/consultaProcesso.xhtml?processo=';
+
       const urls = [
-        `${this.baseUrl}/pje/consulta/publica/consultaProcesso.xhtml?processo=${numFormatado}`,
+        `${this.baseUrl}${detalhePath}${numFormatado}`,
         `${this.baseUrl}/pje/consulta/processo/${numFormatado}`,
       ];
 
@@ -222,7 +356,7 @@ class PJeCrawler {
 
       return await this.extrairDadosProcesso(page);
     } catch (error: any) {
-      logger.error(`PJe Crawler: erro ao buscar detalhes ${numeroProcesso}: ${error.message}`);
+      logger.error(`PJe Crawler [${this.tribunalCodigo}]: erro ao buscar detalhes ${numeroProcesso}: ${error.message}`);
       return null;
     } finally {
       await page.close();
@@ -322,4 +456,8 @@ class PJeCrawler {
   }
 }
 
-export default new PJeCrawler();
+// Instância padrão (TJSP) para backward compatibility
+const defaultPJeCrawler = new PJeCrawler({ tribunalCodigo: 'TJSP' });
+
+export { PJeCrawler };
+export default defaultPJeCrawler;

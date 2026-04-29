@@ -3,11 +3,38 @@
   "version": "1.0.0",
   "private": true,
   "devDependencies": {
-    "husky": "^9.0.0",
-    "lint-staged": "^15.0.0"
+    "@commitlint/cli": "^20.5.2",
+    "@commitlint/config-conventional": "^20.5.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.5.2"
   },
   "lint-staged": {
-    "minha-api/src/**/*.ts": ["eslint --fix"],
-    "dashboard/src/**/*.{ts,tsx}": ["eslint --fix"]
-  }
+    "minha-api/src/**/*.ts": [
+      "cd minha-api && npx eslint --fix src/**/*.ts"
+    ],
+    "dashboard/src/**/*.{ts,tsx}": [
+      "cd dashboard && npx eslint --fix src/**/*.{ts,tsx}"
+    ]
+  },
+  "description": "Sistema completo para monitoramento de processos judiciais brasileiros, com API REST e dashboard administrativo em React.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "prepare": "husky"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gustavopelicioniii-rgb/juridico-api.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/gustavopelicioniii-rgb/juridico-api/issues"
+  },
+  "homepage": "https://github.com/gustavopelicioniii-rgb/juridico-api#readme"
 }

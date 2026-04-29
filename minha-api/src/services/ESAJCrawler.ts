@@ -1,13 +1,15 @@
 /* eslint-disable @typescript-eslint/ban-ts-comment */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
- * ESAJ Crawler - Complementa dados do DataJud via portal e-SAJ TJ-SP
+ * ESAJ Crawler - Complementa dados do DataJud via portal e-SAJ
  *
  * O DataJud não expõe: partes (autor/réu), advogados, valor da causa.
  * Este crawler busca essas informações diretamente no portal e-SAJ:
  *   https://esaj.tjsp.jus.br/cpopg/show.do
  *
  * Busca por OAB: pesquisa processos onde o advogado está cadastrado
+ *
+ * AGORA SUPORTA MÚLTIPLOS TRIBUNAIS - cada tribunal tem seu próprio baseUrl
  */
 
 import puppeteer from 'puppeteer-extra';
@@ -15,8 +17,13 @@ import type { Browser, Page } from 'puppeteer';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import RecaptchaPlugin from 'puppeteer-extra-plugin-recaptcha';
 import logger from '../config/logger';
+import { getCrawlerConfig } from '../config/tribunalCrawlers';
+import { CaptchaHandler, tribunalExigeCaptcha } from './CaptchaHandler';
+import { registry } from '../tribunais';
+import { CrawlerObserver } from './CrawlerObserver';
 
 puppeteer.use(StealthPlugin());
+puppeteer.use(RecaptchaPlugin());
 
 interface ESAJDadosCompletos {
   numeroProcesso: string;
@@ -38,14 +45,42 @@ interface ESAJBuscaResult {
     classe: string;
     orgao: string;
     dataAjuizamento: string;
+    nome?: string;
   }>;
   total: number;
 }
 
+export interface ESAJCrawlerOptions {
+  tribunalCodigo?: string;
+  baseUrl?: string;
+}
+
 class ESAJCrawler {
   private browser: Browser | null = null;
-  private readonly baseUrl = 'https://esaj.tjsp.jus.br';
+  private baseUrl: string;
   private timeout = 30000;
+  private tribunalCodigo: string;
+  private usarCaptcha: boolean;
+
+  constructor(options: ESAJCrawlerOptions = {}) {
+    this.tribunalCodigo = options.tribunalCodigo || 'TJSP';
+
+    if (options.baseUrl) {
+      this.baseUrl = options.baseUrl;
+    } else {
+      const config = getCrawlerConfig(this.tribunalCodigo);
+      this.baseUrl = config?.baseUrl || 'https://esaj.tjsp.jus.br';
+    }
+
+    this.usarCaptcha = tribunalExigeCaptcha(this.tribunalCodigo);
+  }
+
+  /**
+   * Factory method para criar crawler para um tribunal específico
+   */
+  static forTribunal(tribunalCodigo: string): ESAJCrawler {
+    return new ESAJCrawler({ tribunalCodigo });
+  }
 
   async getBrowser(): Promise<Browser> {
     if (!this.browser || !this.browser.isConnected()) {
@@ -73,9 +108,62 @@ class ESAJCrawler {
     }
   }
 
-  async buscarPorOAB(oab: string): Promise<ESAJBuscaResult> {
+  /**
+   * Tenta resolver CAPTCHA se presente
+   */
+  private async verificarCaptcha(page: Page): Promise<boolean> {
+    if (!this.usarCaptcha) return true;
+
+    const captchaHandler = new CaptchaHandler(page, this.tribunalCodigo);
+    const resultado = await captchaHandler.detectarEResolver();
+
+    if (resultado.resolvido) {
+      logger.info(`[ESAJ Crawler] CAPTCHA resolvido para ${this.tribunalCodigo}`);
+      return true;
+    }
+
+    logger.warn(`[ESAJ Crawler] CAPTCHA não resolvido para ${this.tribunalCodigo}: ${resultado.erro}`);
+    return false;
+  }
+
+  /**
+   * Fallback: tenta buscar via DataJud quando crawler falha
+   */
+  private async fallbackDataJud(oab: string, nome?: string): Promise<ESAJBuscaResult> {
+    logger.info(`[ESAJ Crawler] Tentando fallback DataJud para OAB ${oab}${nome ? ` + nome "${nome}"` : ''}`);
+
+    try {
+      const adapter = registry.get(this.tribunalCodigo);
+      if (!adapter) {
+        return { processos: [], total: 0 };
+      }
+
+      const resultado = await adapter.buscarPorOAB(oab, nome);
+
+      return {
+        processos: resultado.processos.map(p => ({
+          numeroProcesso: p.numeroProcesso,
+          classe: '',
+          orgao: '',
+          dataAjuizamento: '',
+        })),
+        total: resultado.total,
+      };
+    } catch (error: any) {
+      logger.error(`[ESAJ Crawler] Fallback DataJud falhou: ${error.message}`);
+      return { processos: [], total: 0 };
+    }
+  }
+
+  async buscarPorOAB(oab: string, nome?: string): Promise<ESAJBuscaResult> {
     const browser = await this.getBrowser();
     const page = await browser.newPage();
+    const traceId = CrawlerObserver.gerarTraceId();
+    const inicio = Date.now();
+
+    let captchaDetectado = false;
+    let captchaResolvido = false;
+    let usandoFallback = false;
 
     try {
       await page.setViewport({ width: 1920, height: 1080 });
@@ -83,12 +171,38 @@ class ESAJCrawler {
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'
       );
 
-      logger.info(`ESAJ Crawler: buscando OAB ${oab}`);
+      logger.info(`ESAJ Crawler [${this.tribunalCodigo}][${traceId}]: buscando OAB ${oab}${nome ? ` + nome "${nome}"` : ''}`);
 
-      await page.goto(`${this.baseUrl}/cpopg/show.do`, {
+      const config = getCrawlerConfig(this.tribunalCodigo);
+      const buscaPath = config?.paths?.buscaOAB || '/cpopg/show.do';
+
+      await page.goto(`${this.baseUrl}${buscaPath}`, {
         waitUntil: 'networkidle2',
         timeout: this.timeout,
       });
+
+      // Verificar e resolver CAPTCHA se presente
+      const captchaHandler = new CaptchaHandler(page, this.tribunalCodigo);
+      const captchaInfo = await captchaHandler.detectar();
+
+      if (captchaInfo.tipo !== 'none') {
+        captchaDetectado = true;
+        const resultadoCaptcha = await captchaHandler.detectarEResolver();
+        captchaResolvido = resultadoCaptcha.resolvido;
+
+        if (!captchaResolvido) {
+          logger.warn(`ESAJ Crawler [${this.tribunalCodigo}][${traceId}]: CAPTCHA detectado mas não resolvido`);
+          usandoFallback = true;
+          const resultado = this.fallbackDataJud(oab, nome);
+          CrawlerObserver.registrarRequisicao(this.tribunalCodigo, Date.now() - inicio, false, {
+            tipoErro: 'CAPTCHA_NAO_RESOLVIDO',
+            usandoFallback: true,
+            captchaDetectado: true,
+            captchaResolvido: false,
+          });
+          return resultado;
+        }
+      }
 
       // Clicar na opção "OAB"
       const oabLink = await page.$('a[data-value="OAB"]');
@@ -99,7 +213,7 @@ class ESAJCrawler {
 
       // Preencher campo OAB - tentar vários seletores
       const filled = await page.evaluate((oabStr: string) => {
-        const doc = globalThis as any;
+        const doc = document as any;
         const selectors = [
           'input[name=" OAB"]',
           'input#nuOABAdvogado',
@@ -122,13 +236,42 @@ class ESAJCrawler {
       }, oab);
 
       if (!filled) {
-        logger.warn('ESAJ Crawler: não encontrou campo OAB');
-        return { processos: [], total: 0 };
+        logger.warn(`ESAJ Crawler [${this.tribunalCodigo}][${traceId}]: não encontrou campo OAB`);
+        usandoFallback = true;
+        const resultado = this.fallbackDataJud(oab, nome);
+        CrawlerObserver.registrarRequisicao(this.tribunalCodigo, Date.now() - inicio, false, {
+          tipoErro: 'CAMPO_OAB_NAO_ENCONTRADO',
+          usandoFallback: true,
+          captchaDetectado,
+          captchaResolvido,
+        });
+        return resultado;
+      }
+
+      // Preencher campo de nome se fornecido
+      if (nome) {
+        await page.evaluate((nomeStr: string) => {
+          const doc = document as any;
+          const nameSelectors = [
+            'input[name*="nome"]',
+            'input[id*="nome"]',
+            'input[placeholder*="nome"]',
+            'input[name*="advogado"]',
+            'input[id*="advogado"]',
+          ];
+          for (const sel of nameSelectors) {
+            const input = doc.querySelector(sel);
+            if (input && !input.value) {
+              input.value = nomeStr;
+              break;
+            }
+          }
+        }, nome);
       }
 
       // Clicar Pesquisar
       await page.evaluate(() => {
-        const doc = globalThis as any;
+        const doc = document as any;
         const btns = Array.from(doc.querySelectorAll('button, input[type="submit"], a.btn'));
         const pBtn = btns.find((b: any) =>
           b.textContent?.includes('Pesquisar') ||
@@ -141,12 +284,26 @@ class ESAJCrawler {
       await page.waitForSelector('table, .resultado, #listagemDeProcessos', { timeout: 10000 }).catch(() => null);
 
       const resultados = await this.extrairResultadosTabela(page);
-      logger.info(`ESAJ Crawler: OAB ${oab} retornou ${resultados.length} processos`);
+      logger.info(`ESAJ Crawler [${this.tribunalCodigo}][${traceId}]: OAB ${oab} retornou ${resultados.length} processos`);
+
+      CrawlerObserver.registrarRequisicao(this.tribunalCodigo, Date.now() - inicio, true, {
+        usandoFallback,
+        captchaDetectado,
+        captchaResolvido,
+      });
 
       return { processos: resultados, total: resultados.length };
     } catch (error: any) {
-      logger.error(`ESAJ Crawler: erro ao buscar OAB ${oab}: ${error.message}`);
-      return { processos: [], total: 0 };
+      logger.error(`ESAJ Crawler [${this.tribunalCodigo}][${traceId}]: erro ao buscar OAB ${oab}: ${error.message}`);
+
+      CrawlerObserver.registrarRequisicao(this.tribunalCodigo, Date.now() - inicio, false, {
+        tipoErro: error.message,
+        usandoFallback: true,
+        captchaDetectado,
+        captchaResolvido,
+      });
+
+      return this.fallbackDataJud(oab, nome);
     } finally {
       await page.close();
     }
@@ -163,8 +320,11 @@ class ESAJCrawler {
       );
 
       const numFormatado = numeroProcesso.replace(/\D/g, '');
+      const config = getCrawlerConfig(this.tribunalCodigo);
+      const detalheBase = config?.paths?.detalheProcesso || '/cpopg/show.do?processo.numero=';
+
       const urlsParaTentar = [
-        `${this.baseUrl}/cpopg/show.do?processo.numero=${numFormatado}`,
+        `${this.baseUrl}${detalheBase}${numFormatado}`,
         `${this.baseUrl}/cpopg5/show.do?processo=${numFormatado}`,
         `${this.baseUrl}/cpopg/search.do?processo=${numFormatado}`,
       ];
@@ -184,7 +344,7 @@ class ESAJCrawler {
       const dados = await this.extrairDadosProcesso(page);
       return dados;
     } catch (error: any) {
-      logger.error(`ESAJ Crawler: erro ao buscar detalhes do processo ${numeroProcesso}: ${error.message}`);
+      logger.error(`ESAJ Crawler [${this.tribunalCodigo}]: erro ao buscar detalhes do processo ${numeroProcesso}: ${error.message}`);
       return null;
     } finally {
       await page.close();
@@ -193,7 +353,7 @@ class ESAJCrawler {
 
   private async extrairResultadosTabela(page: Page): Promise<ESAJBuscaResult['processos']> {
     return page.evaluate(() => {
-      const doc = globalThis as any;
+      const doc = document as any;
       const resultados: any[] = [];
 
       const rows = doc.querySelectorAll('table tbody tr, .resultado tr, #listagem tr');
@@ -239,7 +399,7 @@ class ESAJCrawler {
 
   private async extrairDadosProcesso(page: Page): Promise<ESAJDadosCompletos | null> {
     return page.evaluate(() => {
-      const doc = globalThis as any;
+      const doc = document;
       const resultado: ESAJDadosCompletos = { numeroProcesso: '', partes: [] };
 
       const numeroEl = doc.querySelector(
@@ -316,4 +476,8 @@ class ESAJCrawler {
   }
 }
 
-export default new ESAJCrawler();
+// Instância padrão (TJSP) para backward compatibility
+const defaultESAJCrawler = new ESAJCrawler({ tribunalCodigo: 'TJSP' });
+
+export { ESAJCrawler };
+export default defaultESAJCrawler;

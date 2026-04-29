@@ -11,6 +11,7 @@ import ProcessoMonitoramentoService from '../services/ProcessoMonitoramentoServi
 import Monitoramento from '../models/Monitoramento';
 import Processo from '../models/Processo';
 import JobModel from '../models/Job';
+import { getTribunaisParaBusca, derivarTribunaisPorOAB } from '../services/TribunalDerivacaoService';
 
 // Configuração da fila
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
@@ -175,11 +176,32 @@ export async function agendarInitialOABCrawl(
     return duplicate as Job<ScrapeJobData>;
   }
 
-  const tribunaisPadrao = process.env.INITIAL_OAB_TRIBUNAIS?.split(',')
-    .map((codigo) => codigo.trim().toUpperCase())
-    .filter(Boolean);
-
-  const tribunaisAlvo = (data.tribunais && data.tribunais.length > 0 ? data.tribunais : tribunaisPadrao) || ['TJSP'];
+  // Deriva tribunais automaticamente pela UF da OAB, ou usa especificados, ou usa todos
+  let tribunaisAlvo: string[];
+  
+  if (data.tribunais && data.tribunais.length > 0) {
+    // Se tribunais foram especificados explicitamente, usa eles
+    tribunaisAlvo = data.tribunais.map(t => t.toUpperCase());
+  } else {
+    // Deriva tribunais pela UF da OAB
+    const derivacao = derivarTribunaisPorOAB(data.oab);
+    if (derivacao) {
+      tribunaisAlvo = derivacao.tribunais.map(t => t.codigo);
+      logger.info(`Tribunais derivados da OAB ${data.oab}: ${tribunaisAlvo.join(', ')}`);
+    } else {
+      // Sem UF na OAB: usa a env var ou busca todos os tribunais
+      const tribunaisPadrao = process.env.INITIAL_OAB_TRIBUNAIS?.split(',')
+        .map((codigo) => codigo.trim().toUpperCase())
+        .filter(Boolean);
+      
+      if (tribunaisPadrao && tribunaisPadrao.length > 0) {
+        tribunaisAlvo = tribunaisPadrao;
+      } else {
+        // Busca em todos os tribunais disponíveis no registry
+        tribunaisAlvo = registry.listar().map(t => t.codigo);
+      }
+    }
+  }
 
   const job = await scrapeQueue.add({
     ...data,
@@ -233,7 +255,19 @@ async function ensureMonitoramentoParaProcesso(processoId: string, advogadoId?: 
 }
 
 async function processInitialOABCrawl(job: Job<ScrapeJobData>): Promise<ScrapeJobResult> {
-  const { advogadoId, oab, nome, tribunais = ['TJSP'], correlationId } = job.data;
+  const { advogadoId, oab, nome, tribunais = [], correlationId } = job.data;
+
+  // Se tribunais vier vazio (edge case), deriva novamente
+  let tribunaisAlvo = tribunais;
+  if (!tribunaisAlvo || tribunaisAlvo.length === 0) {
+    const derivacao = derivarTribunaisPorOAB(oab);
+    if (derivacao) {
+      tribunaisAlvo = derivacao.tribunais.map(t => t.codigo);
+    } else {
+      tribunaisAlvo = registry.listar().map(t => t.codigo);
+    }
+    logger.info(`Tribunais re-derivados para ${oab}: ${tribunaisAlvo.join(', ')}`);
+  }
 
   if (!advogadoId || !oab) {
     throw new Error('Job INITIAL_OAB_CRAWL inválido: advogadoId e oab são obrigatórios');
@@ -242,7 +276,7 @@ async function processInitialOABCrawl(job: Job<ScrapeJobData>): Promise<ScrapeJo
   let totalEncontrados = 0;
   let totalSalvos = 0;
 
-  for (const tribunalCodigoRaw of tribunais) {
+  for (const tribunalCodigoRaw of tribunaisAlvo) {
     const tribunalCodigo = tribunalCodigoRaw.toUpperCase();
     const adapter = registry.get(tribunalCodigo);
 

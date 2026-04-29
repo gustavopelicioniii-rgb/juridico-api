@@ -5,17 +5,22 @@
  * 1. DataJud (API pública CNJ) - busca rápida de processos por OAB
  * 2. ESAJ Crawler - complementa com partes, advogados e valor da causa
  * 3. PJe Crawler - backup para processos do PJe
+ *
+ * AGORA SUPORTA MÚLTIPLOS TRIBUNAIS - cada tribunal usa seu crawler específico
  */
 
 import { Op } from 'sequelize';
 import { registry } from '../tribunais';
-import esajCrawler from './ESAJCrawler';
-import pjeCrawler from './PJeCrawler';
-import { Processo, Parte } from '../models';
+import { ESAJCrawler } from './ESAJCrawler';
+import { PJeCrawler } from './PJeCrawler';
+import { Processo, Parte, Movimentacao } from '../models';
 import logger from '../config/logger';
+import { derivarTribunaisPorOAB, getTribunaisParaBusca } from './TribunalDerivacaoService';
+import { getCrawlerConfig } from '../config/tribunalCrawlers';
 
 interface ProcessoEnriquecido {
   numeroProcesso: string;
+  tribunalCodigo: string;
   dados: any;
   fonte: 'datajud' | 'esaj' | 'pje';
   enriquecido: boolean;
@@ -29,43 +34,141 @@ interface ResultadoOAB {
 }
 
 /**
+ * Obtém o crawler correto baseado no código do tribunal
+ */
+function getCrawlerForTribunal(tribunalCodigo: string): { esaj?: ESAJCrawler; pje?: PJeCrawler } {
+  const config = getCrawlerConfig(tribunalCodigo);
+  
+  if (!config) {
+    // Fallback para TJSP se não houver configuração
+    return { esaj: ESAJCrawler.forTribunal('TJSP'), pje: PJeCrawler.forTribunal('TJSP') };
+  }
+
+  if (config.tipo === 'ESAJ') {
+    return { esaj: ESAJCrawler.forTribunal(tribunalCodigo) };
+  }
+
+  if (config.tipo === 'PJE') {
+    return { pje: PJeCrawler.forTribunal(tribunalCodigo) };
+  }
+
+  // OTHER ou desconhecido - tenta ambos como fallback
+  return { esaj: ESAJCrawler.forTribunal(tribunalCodigo), pje: PJeCrawler.forTribunal(tribunalCodigo) };
+}
+
+/**
+ * Busca crawler para enriquecimento de detalhes
+ */
+async function buscarDetalhesDoProcesso(
+  numeroProcesso: string,
+  tribunais: string[]
+): Promise<{ dados: any; fonte: 'datajud' | 'esaj' | 'pje'; tribunalCodigo: string }> {
+  // 1. Tentar crawlers ESAJ/PJe para cada tribunal
+  for (const tribunalCodigo of tribunais) {
+    const crawlers = getCrawlerForTribunal(tribunalCodigo);
+
+    if (crawlers.esaj) {
+      const dados = await crawlers.esaj.buscarDetalhesProcesso(numeroProcesso);
+      if (dados && dados.numeroProcesso) {
+        return { dados, fonte: 'esaj', tribunalCodigo };
+      }
+    }
+
+    if (crawlers.pje) {
+      const dados = await crawlers.pje.buscarDetalhesProcesso(numeroProcesso);
+      if (dados && dados.numeroProcesso) {
+        return { dados, fonte: 'pje', tribunalCodigo };
+      }
+    }
+  }
+
+  // 2. Fallback: tentar DataJud em cada tribunal derivado
+  for (const tribunalCodigo of tribunais) {
+    try {
+      const adapter = registry.get(tribunalCodigo);
+      if (adapter) {
+        const dados = await adapter.buscarProcesso(numeroProcesso);
+        if (dados && dados.numeroProcesso) {
+          return { dados, fonte: 'datajud', tribunalCodigo };
+        }
+      }
+    } catch { /* continua para próximo */ }
+  }
+
+  return { dados: null, fonte: 'datajud', tribunalCodigo: tribunais[0] || 'UNKNOWN' };
+}
+
+/**
  * Busca por OAB: combina DataJud (rápido) + enriquecimento crawler (detalhes ricos)
+ * Deriva automaticamente os tribunais pela UF da OAB
+ * Suporta filtro por nome do advogado para evitar resultados de OABs compartilhadas
  */
 async function buscarPorOABEnriquecido(
   oab: string,
-  enriquecer = true
+  enriquecer = true,
+  nome?: string
 ): Promise<ResultadoOAB> {
   const oabFormatada = oab.toUpperCase().replace(/\s/g, '');
 
-  logger.info(`[Enriquecimento] Iniciando busca OAB ${oabFormatada}`);
+  logger.info(`[Enriquecimento] Iniciando busca OAB ${oabFormatada}${nome ? ` + nome "${nome}"` : ''}`);
 
-  // 1. Buscar no DataJud via registry (usa TJSP por padrão para OAB SP)
+  // 1. Derivar tribunais pela UF da OAB
+  const derivacao = derivarTribunaisPorOAB(oabFormatada);
+  const tribunais = derivacao 
+    ? derivacao.tribunais.map(t => t.codigo)
+    : registry.listar().map(t => t.codigo);
+
+  logger.info(`[Enriquecimento] Buscando em ${tribunais.length} tribunais: ${tribunais.join(', ')}`);
+
+  // 2. Buscar no DataJud em cada tribunal derivado
   let numerosProcessos: string[] = [];
+  const seenNumbers = new Set<string>();
 
-  try {
-    const adapter = registry.get('TJSP');
-    if (adapter) {
-      const resultados = await adapter.buscarPorOAB(oabFormatada);
-      numerosProcessos = resultados.processos.map((r: any) => r.numeroProcesso);
-      logger.info(`[Enriquecimento] DataJud retornou ${numerosProcessos.length} processos`);
+  for (const tribunalCodigo of tribunais) {
+    try {
+      const adapter = registry.get(tribunalCodigo);
+      if (!adapter) continue;
+
+      const resultados = await adapter.buscarPorOAB(oabFormatada, nome);
+      
+      for (const proc of resultados.processos) {
+        if (!seenNumbers.has(proc.numeroProcesso)) {
+          seenNumbers.add(proc.numeroProcesso);
+          numerosProcessos.push(proc.numeroProcesso);
+        }
+      }
+      
+      logger.info(`[Enriquecimento] ${tribunalCodigo}: ${resultados.total} processos`);
+    } catch (error: any) {
+      logger.warn(`[Enriquecimento] Erro em ${tribunalCodigo}: ${error.message}`);
     }
-  } catch (error: any) {
-    logger.error(`[Enriquecimento] Erro DataJud: ${error.message}`);
   }
 
-  // 2. Se não encontrou no DataJud, tentar crawlers diretamente
-  if (numerosProcessos.length === 0) {
-    logger.info(`[Enriquecimento] DataJud retornou vazio, tentando ESAJ crawler...`);
+  logger.info(`[Enriquecimento] Total único: ${numerosProcessos.length} processos`);
 
-    const resultadoESAJ = await esajCrawler.buscarPorOAB(oabFormatada);
-    if (resultadoESAJ.processos.length > 0) {
-      numerosProcessos = resultadoESAJ.processos.map(p => p.numeroProcesso);
-      logger.info(`[Enriquecimento] ESAJ retornou ${numerosProcessos.length} processos`);
-    } else {
-      const resultadoPJe = await pjeCrawler.buscarPorOAB(oabFormatada);
-      if (resultadoPJe.processos.length > 0) {
-        numerosProcessos = resultadoPJe.processos.map(p => p.numeroProcesso);
-        logger.info(`[Enriquecimento] PJe retornou ${numerosProcessos.length} processos`);
+  // 3. Se não encontrou no DataJud, tentar crawlers ESAJ/PJe para cada tribunal derivado
+  if (numerosProcessos.length === 0) {
+    logger.info(`[Enriquecimento] DataJud retornou vazio, tentando crawlers...`);
+
+    for (const tribunalCodigo of tribunais) {
+      const crawlers = getCrawlerForTribunal(tribunalCodigo);
+
+      if (crawlers.esaj) {
+        const resultadoESAJ = await crawlers.esaj.buscarPorOAB(oabFormatada, nome);
+        if (resultadoESAJ.processos.length > 0) {
+          numerosProcessos = resultadoESAJ.processos.map(p => p.numeroProcesso);
+          logger.info(`[Enriquecimento] ESAJ [${tribunalCodigo}] retornou ${numerosProcessos.length} processos`);
+          break;
+        }
+      }
+
+      if (crawlers.pje) {
+        const resultadoPJe = await crawlers.pje.buscarPorOAB(oabFormatada, nome);
+        if (resultadoPJe.processos.length > 0) {
+          numerosProcessos = resultadoPJe.processos.map(p => p.numeroProcesso);
+          logger.info(`[Enriquecimento] PJe [${tribunalCodigo}] retornou ${numerosProcessos.length} processos`);
+          break;
+        }
       }
     }
   }
@@ -74,7 +177,7 @@ async function buscarPorOABEnriquecido(
     return { processos: [], total: 0, novos: [], atualizados: [] };
   }
 
-  // 3. Identificar processos novos vs já salvos no banco
+  // 4. Identificar processos novos vs já salvos no banco
   const existente = await Processo.findAll({
     where: { numeroProcesso: { [Op.in]: numerosProcessos } },
     attributes: ['numeroProcesso'],
@@ -89,7 +192,7 @@ async function buscarPorOABEnriquecido(
     `[Enriquecimento] Já existem ${numerosAtualizar.length} processos, ${numerosNovos.length} são novos`
   );
 
-  // 4. Enriquecer processos (crawler para partes, advogados, valor)
+  // 5. Enriquecer processos (crawler para partes, advogados, valor)
   const processosEnriquecidos: ProcessoEnriquecido[] = [];
 
   if (enriquecer) {
@@ -100,28 +203,11 @@ async function buscarPorOABEnriquecido(
       const enriched = await Promise.all(
         batch.map(async (numero) => {
           try {
-            let dados: any = null;
-            let fonte: 'datajud' | 'esaj' | 'pje' = 'esaj';
-
-            // Tentar ESAJ primeiro (mais comum)
-            dados = await esajCrawler.buscarDetalhesProcesso(numero);
-
-            if (!dados || !dados.numeroProcesso) {
-              dados = await pjeCrawler.buscarDetalhesProcesso(numero);
-              fonte = 'pje';
-            }
-
-            if (!dados || !dados.numeroProcesso) {
-              // Fallback: buscar apenas no DataJud
-              const adapter = registry.get('TJSP');
-              if (adapter) {
-                dados = await adapter.buscarProcesso(numero);
-              }
-              fonte = 'datajud';
-            }
+            const { dados, fonte, tribunalCodigo } = await buscarDetalhesDoProcesso(numero, tribunais);
 
             return {
               numeroProcesso: numero,
+              tribunalCodigo,
               dados: dados || {},
               fonte,
               enriquecido: fonte !== 'datajud',
@@ -130,6 +216,7 @@ async function buscarPorOABEnriquecido(
             logger.error(`[Enriquecimento] Erro ao enriquecer ${numero}: ${error.message}`);
             return {
               numeroProcesso: numero,
+              tribunalCodigo: tribunais[0] || 'UNKNOWN',
               dados: {},
               fonte: 'datajud' as const,
               enriquecido: false,
@@ -145,19 +232,26 @@ async function buscarPorOABEnriquecido(
       }
     }
   } else {
-    const adapter = registry.get('TJSP');
+    // Sem enriquecimento: busca apenas no DataJud para tribunais derivados
     for (const numero of numerosProcessos) {
-      try {
-        if (adapter) {
-          const dados = await adapter.buscarProcesso(numero);
-          processosEnriquecidos.push({
-            numeroProcesso: numero,
-            dados: dados || {},
-            fonte: 'datajud' as const,
-            enriquecido: false,
-          });
-        }
-      } catch { /* skip */ }
+      for (const tribunalCodigo of tribunais) {
+        try {
+          const adapter = registry.get(tribunalCodigo);
+          if (adapter) {
+            const dados = await adapter.buscarProcesso(numero);
+            if (dados && dados.numeroProcesso) {
+              processosEnriquecidos.push({
+                numeroProcesso: numero,
+                tribunalCodigo,
+                dados: dados || {},
+                fonte: 'datajud' as const,
+                enriquecido: false,
+              });
+              break; // Encontrou, não precisa tentar outro tribunal
+            }
+          }
+        } catch { /* continua para próximo tribunal */ }
+      }
     }
   }
 
@@ -252,9 +346,51 @@ async function salvarProcessoEnriquecido(
                   isAdvogado: true,
                 },
               });
+            } else if (adv && adv.nome) {
+              await Parte.findOrCreate({
+                where: { processoId: procInstance.id, nome: adv.nome },
+                defaults: {
+                  processoId: procInstance.id,
+                  tipo: 'ADVOGADO' as any,
+                  nome: adv.nome,
+                  isAdvogado: true,
+                },
+              });
             }
           }
         }
+      }
+    }
+  }
+
+  // Salvar movimentações
+  if (dados.movimentacoes && dados.movimentacoes.length > 0) {
+    const procInstance = await Processo.findOne({
+      where: { numeroProcesso },
+      attributes: ['id'],
+      raw: true,
+    });
+
+    if (procInstance) {
+      for (const mov of dados.movimentacoes) {
+        const movData = mov.data instanceof Date ? mov.data : new Date(mov.data);
+        if (isNaN(movData.getTime())) continue;
+
+        const [movModel] = await Movimentacao.findOrCreate({
+          where: {
+            processoId: procInstance.id,
+            data: movData,
+            descricao: mov.descricao,
+          },
+          defaults: {
+            processoId: procInstance.id,
+            descricao: mov.descricao,
+            data: movData,
+            origem: mov.origem || null,
+            dadosOriginais: mov.dadosOriginais || {},
+            nova: false,
+          },
+        });
       }
     }
   }

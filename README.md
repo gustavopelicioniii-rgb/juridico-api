@@ -137,7 +137,92 @@ Após iniciar a API, acesse:
 
 ```bash
 cd minha-api
-npm test
+npm test              # Executar testes
+npm run test:watch   # Modo watch
+npm run test:coverage # Com coverage
+```
+
+## 🔄 CI/CD
+
+### GitHub Actions
+
+O projeto utiliza GitHub Actions para CI/CD com os seguintes jobs:
+
+| Job | Descrição | Gatilho |
+|-----|-----------|---------|
+| `lint-and-typecheck` | ESLint + TypeScript | Push/PR |
+| `test` | Jest + Coverage | Push/PR |
+| `build` | Build production | Push/PR |
+| `security` | npm audit + Trivy | Push/PR |
+| `docker` | Build + Push imagens | Push (main) |
+
+### Validação Local
+
+```bash
+# Validar tudo (lint + typecheck + test)
+cd minha-api
+npm run validate
+
+# Apenas lint e typecheck (CI mode)
+npm run validate:ci
+```
+
+### Hooks (Husky)
+
+Antes de cada commit, os seguintes hooks são executados:
+
+1. **commitlint** - Valida formato da mensagem de commit
+2. **lint-staged** - ESLint + TypeScript nos arquivos staged
+
+### Mensagens de Commit
+
+Formato Conventional Commits:
+
+```
+<tipo>(<escopo>): <descrição>
+
+exemplos:
+feat(crawler): adicionar suporte a TJRS
+fix(auth): corrigir validação de JWT
+docs(readme): atualizar documentação
+refactor(ESAJCrawler): extrair método de CAPTCHA
+```
+
+Tipos válidos: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`
+
+## 🏗️ Desenvolvimento
+
+### Scripts Disponíveis
+
+```bash
+# Backend (minha-api)
+npm run dev           # Desenvolvimento com ts-node
+npm run build         # Build production
+npm run lint          # ESLint
+npm run lint:fix      # ESLint com auto-fix
+npm run typecheck     # TypeScript check
+npm run migrate       # Executar migrations
+npm run seed          # Popular banco de dados
+```
+
+### Estrutura de Diretórios
+
+```
+minha-api/
+├── src/
+│   ├── config/          # Configurações (DB, Redis, Logger)
+│   ├── middleware/       # Middlewares Express
+│   ├── models/           # Modelos Sequelize
+│   ├── routes/           # Rotas da API
+│   ├── services/         # Lógica de negócio
+│   ├── tribunais/        # Adaptadores de tribunais
+│   ├── queues/          # Filas Bull
+│   ├── websocket/       # Socket.IO
+│   └── crawler/         # Crawlers ESAJ/PJe
+├── tests/
+│   ├── mocks/           # Mocks para testes
+│   └── unit/            # Testes unitários
+└── scripts/            # Scripts utilitários
 ```
 
 ## 📄 Licença

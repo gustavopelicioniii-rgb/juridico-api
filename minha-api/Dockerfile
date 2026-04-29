@@ -2,6 +2,7 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+ARG BUILD_DATE=2026-04-29
 COPY package*.json ./
 RUN npm install
 
@@ -15,6 +16,7 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+ARG BUILD_DATE=2026-04-29
 COPY package*.json ./
 RUN npm install --omit=dev --ignore-scripts
 

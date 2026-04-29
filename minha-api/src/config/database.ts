@@ -58,11 +58,19 @@ const configMap: Record<string, DatabaseConfig> = {
 
 const dbConfig = configMap[env] || configMap.development;
 
-console.log(`[DB] NODE_ENV=${env}, DATABASE_URL=${process.env.DATABASE_URL ? 'SET' : 'NOT SET'}, using=${process.env.DATABASE_URL ? 'postgres' : dbConfig.dialect}`);
+// Sempre usa DATABASE_URL se existir (production PostgreSQL do Render)
+const useUrl = !!process.env.DATABASE_URL;
+console.log(`[DB] useUrl=${useUrl}, NODE_ENV=${env}, DATABASE_URL=${useUrl ? 'SET' : 'NOT SET'}`);
 
-export const sequelize = new Sequelize({
-  ...(process.env.DATABASE_URL
-    ? { url: process.env.DATABASE_URL }
+export const sequelize = new Sequelize(
+  useUrl
+    ? {
+        url: process.env.DATABASE_URL,
+        logging: false,
+        pool: dbConfig.pool,
+        define: { timestamps: true, underscored: true },
+        dialectOptions: { ssl: { rejectUnauthorized: false } },
+      }
     : {
         dialect: dbConfig.dialect,
         storage: dbConfig.storage,
@@ -71,17 +79,11 @@ export const sequelize = new Sequelize({
         database: dbConfig.database,
         username: dbConfig.username,
         password: dbConfig.password,
-      }),
-  logging: dbConfig.logging,
-  pool: dbConfig.pool,
-  define: {
-    timestamps: true,
-    underscored: true,
-  },
-  dialectOptions: process.env.DATABASE_URL
-    ? { ssl: { rejectUnauthorized: false } }
-    : undefined,
-});
+        logging: dbConfig.logging,
+        pool: dbConfig.pool,
+        define: { timestamps: true, underscored: true },
+      }
+);
 
 export const connectDatabase = async (): Promise<void> => {
   try {
