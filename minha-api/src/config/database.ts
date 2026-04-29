@@ -58,6 +58,8 @@ const configMap: Record<string, DatabaseConfig> = {
 
 const dbConfig = configMap[env] || configMap.development;
 
+console.log(`[DB] NODE_ENV=${env}, DATABASE_URL=${process.env.DATABASE_URL ? 'SET' : 'NOT SET'}, using=${process.env.DATABASE_URL ? 'postgres' : dbConfig.dialect}`);
+
 export const sequelize = new Sequelize({
   ...(process.env.DATABASE_URL
     ? { url: process.env.DATABASE_URL }
