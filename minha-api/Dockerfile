@@ -18,6 +18,11 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install --omit=dev --ignore-scripts
 
+# Copia módulos nativos pré-compilados do builder (sqlite3)
+COPY --from=builder /app/node_modules/sqlite3 ./node_modules/sqlite3
+COPY --from=builder /app/node_modules/bindings ./node_modules/bindings
+COPY --from=builder /app/node_modules/file-uri-to-path ./node_modules/file-uri-to-path
+
 COPY --from=builder /app/dist ./dist
 
 EXPOSE 3000
