@@ -198,7 +198,11 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // Auto-seed: popula tribunais e usuário admin no primeiro startup
 const autoSeed = async () => {
-  const tribunais = [
+  const tribunais: Array<{
+    codigo: string; nome: string; baseUrl: string;
+    tipo: 'TJ' | 'STJ' | 'STF' | 'TRT' | 'TRF';
+    usaCaptcha: boolean; scraperConfig: Record<string, string>;
+  }> = [
     { codigo: 'TJSP', nome: 'Tribunal de Justiça de São Paulo', baseUrl: 'https://api.tjsp.jus.br', tipo: 'TJ', usaCaptcha: false, scraperConfig: { endpoint: '/v2/processos' } },
     { codigo: 'TJMG', nome: 'Tribunal de Justiça de Minas Gerais', baseUrl: 'https://www.tjmg.jus.br', tipo: 'TJ', usaCaptcha: true, scraperConfig: { portal: 'cpov' } },
     { codigo: 'STJ', nome: 'Superior Tribunal de Justiça', baseUrl: 'https://www.stj.jus.br', tipo: 'STJ', usaCaptcha: false, scraperConfig: { caminho: '/consultas/processo' } },
