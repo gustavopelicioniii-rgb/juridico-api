@@ -11,7 +11,9 @@ import ProcessoMonitoramentoService from '../services/ProcessoMonitoramentoServi
 import Monitoramento from '../models/Monitoramento';
 import Processo from '../models/Processo';
 import JobModel from '../models/Job';
-import { getTribunaisParaBusca, derivarTribunaisPorOAB } from '../services/TribunalDerivacaoService';
+// TribunalDerivacaoService removed - stub functions
+const getTribunaisParaBusca = (_oab: string): string[] => [];
+const derivarTribunaisPorOAB = (_oab: string): string[] => [];
 
 // Configuração da fila
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
@@ -181,12 +183,12 @@ export async function agendarInitialOABCrawl(
   
   if (data.tribunais && data.tribunais.length > 0) {
     // Se tribunais foram especificados explicitamente, usa eles
-    tribunaisAlvo = data.tribunais.map(t => t.toUpperCase());
+    tribunaisAlvo = data.tribunais.map((t: string) => t.toUpperCase());
   } else {
     // Deriva tribunais pela UF da OAB
     const derivacao = derivarTribunaisPorOAB(data.oab);
-    if (derivacao) {
-      tribunaisAlvo = derivacao.tribunais.map(t => t.codigo);
+    if (derivacao && derivacao.length > 0) {
+      tribunaisAlvo = derivacao;
       logger.info(`Tribunais derivados da OAB ${data.oab}: ${tribunaisAlvo.join(', ')}`);
     } else {
       // Sem UF na OAB: usa a env var ou busca todos os tribunais
@@ -261,8 +263,8 @@ async function processInitialOABCrawl(job: Job<ScrapeJobData>): Promise<ScrapeJo
   let tribunaisAlvo = tribunais;
   if (!tribunaisAlvo || tribunaisAlvo.length === 0) {
     const derivacao = derivarTribunaisPorOAB(oab);
-    if (derivacao) {
-      tribunaisAlvo = derivacao.tribunais.map(t => t.codigo);
+    if (derivacao && derivacao.length > 0) {
+      tribunaisAlvo = derivacao;
     } else {
       tribunaisAlvo = registry.listar().map(t => t.codigo);
     }

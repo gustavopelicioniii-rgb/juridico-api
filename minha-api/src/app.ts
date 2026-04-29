@@ -132,54 +132,13 @@ app.get('/api/v1/health', async (_req: Request, res: Response) => {
   }
 });
 
-// Crawler health check - métricas e status dos crawlers
+// Crawler health check (stub - crawlers removed)
 app.get('/api/v1/health/crawlers', async (_req: Request, res: Response) => {
-  try {
-    const { CrawlerObserver } = await import('./services/CrawlerObserver');
-    const health = CrawlerObserver.getHealth();
-
-    const statusCode = health.status === 'healthy' ? 200 : health.status === 'degraded' ? 200 : 503;
-
-    res.status(statusCode).json({
-      status: health.status,
-      timestamp: new Date().toISOString(),
-      tribunais: health.tribunais,
-      services: {
-        fallbackDataJud: health.fallbackDisponivel,
-        captchaResolucao: health.captchaDisponivel,
-      },
-    });
-  } catch (error) {
-    res.status(503).json({
-      status: 'error',
-      timestamp: new Date().toISOString(),
-      erro: 'Falha ao obter métricas dos crawlers',
-    });
-  }
+  res.json({ status: 'unavailable', timestamp: new Date().toISOString() });
 });
 
-// Crawler métricas detalhadas
 app.get('/api/v1/metrics/crawlers', async (_req: Request, res: Response) => {
-  try {
-    const { CrawlerObserver } = await import('./services/CrawlerObserver');
-    const tribunais = (_req.query.tribunal as string)?.split(',');
-
-    if (tribunais && tribunais.length > 0) {
-      const metricas: Record<string, any> = {};
-      for (const t of tribunais) {
-        const m = CrawlerObserver.getMetricas(t.trim());
-        if (m) metricas[t.trim()] = m;
-      }
-      res.json({ metricas });
-    } else {
-      const todasMetricas = CrawlerObserver.getTodasMetricas();
-      res.json({ metricas: todasMetricas });
-    }
-  } catch (error) {
-    res.status(500).json({
-      erro: 'Falha ao obter métricas',
-    });
-  }
+  res.json({ metricas: {} });
 });
 
 // API routes
