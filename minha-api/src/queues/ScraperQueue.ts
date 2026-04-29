@@ -261,8 +261,8 @@ async function processInitialOABCrawl(job: Job<ScrapeJobData>): Promise<ScrapeJo
 
   // Se tribunais vier vazio (edge case), deriva novamente
   let tribunaisAlvo = tribunais;
-  if (!tribunaisAlvo || tribunaisAlvo.length === 0) {
-    const derivacao = derivarTribunaisPorOAB(oab);
+  if ((!tribunaisAlvo || tribunaisAlvo.length === 0) && oab) {
+    const derivacao = derivarTribunaisPorOAB(oab!);
     if (derivacao && derivacao.length > 0) {
       tribunaisAlvo = derivacao;
     } else {

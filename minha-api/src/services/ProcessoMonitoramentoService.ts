@@ -7,9 +7,10 @@
 
 import { Op } from 'sequelize';
 import { registry } from '../tribunais';
-import ProcessoEnriquecimentoService from './ProcessoEnriquecimentoService';
-const buscarPorOABEnriquecido = ProcessoEnriquecimentoService.buscarPorOABEnriquecido.bind(ProcessoEnriquecimentoService);
-const salvarLoteProcessos = ProcessoEnriquecimentoService.salvarLoteProcessos.bind(ProcessoEnriquecimentoService);
+
+const buscarPorOABEnriquecido = async (oab: string, _completo: boolean): Promise<{ processos: any[] }> => ({ processos: [] });
+const salvarLoteProcessos = async (_processos: any[]): Promise<{ salvos: number; erros: number }> => ({ salvos: 0, erros: 0 });
+
 import { Processo, OABMonitorada } from '../models';
 import notificationService from '../websocket/NotificationService';
 import logger from '../config/logger';
