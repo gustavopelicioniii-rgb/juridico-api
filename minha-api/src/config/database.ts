@@ -42,6 +42,9 @@ const configMap: Record<string, DatabaseConfig> = {
     username: process.env.DB_USER || 'postgres',
     password: process.env.DB_PASSWORD || '',
     logging: false,
+    dialectOptions: process.env.DATABASE_URL
+      ? { ssl: { rejectUnauthorized: false } }
+      : undefined,
     pool: {
       max: 20,
       min: 5,
@@ -59,13 +62,17 @@ const configMap: Record<string, DatabaseConfig> = {
 const dbConfig = configMap[env] || configMap.development;
 
 export const sequelize = new Sequelize({
-  dialect: dbConfig.dialect,
-  storage: dbConfig.storage,
-  host: dbConfig.host,
-  port: dbConfig.port,
-  database: dbConfig.database,
-  username: dbConfig.username,
-  password: dbConfig.password,
+  ...(process.env.DATABASE_URL
+    ? { url: process.env.DATABASE_URL }
+    : {
+        dialect: dbConfig.dialect,
+        storage: dbConfig.storage,
+        host: dbConfig.host,
+        port: dbConfig.port,
+        database: dbConfig.database,
+        username: dbConfig.username,
+        password: dbConfig.password,
+      }),
   logging: dbConfig.logging,
   pool: dbConfig.pool,
   define: {
