@@ -14,6 +14,9 @@ import { redis } from './config/redis';
 import { router } from './routes';
 import { notificationService } from './websocket';
 import { requestIdMiddleware, metricsMiddleware, register } from './middleware/metrics';
+import Tribunal from './models/Tribunal';
+import Advogado from './models/Advogado';
+import bcrypt from 'bcryptjs';
 
 dotenv.config();
 
@@ -193,10 +196,33 @@ const gracefulShutdown = async (signal: string) => {
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
+// Auto-seed: popula tribunais e usuário admin no primeiro startup
+const autoSeed = async () => {
+  const tribunais = [
+    { codigo: 'TJSP', nome: 'Tribunal de Justiça de São Paulo', baseUrl: 'https://api.tjsp.jus.br', tipo: 'TJ', usaCaptcha: false, scraperConfig: { endpoint: '/v2/processos' } },
+    { codigo: 'TJMG', nome: 'Tribunal de Justiça de Minas Gerais', baseUrl: 'https://www.tjmg.jus.br', tipo: 'TJ', usaCaptcha: true, scraperConfig: { portal: 'cpov' } },
+    { codigo: 'STJ', nome: 'Superior Tribunal de Justiça', baseUrl: 'https://www.stj.jus.br', tipo: 'STJ', usaCaptcha: false, scraperConfig: { caminho: '/consultas/processo' } },
+    { codigo: 'STF', nome: 'Supremo Tribunal Federal', baseUrl: 'https://portal.stf.jus.br', tipo: 'STF', usaCaptcha: false, scraperConfig: { caminho: '/processos' } },
+    { codigo: 'TST', nome: 'Tribunal Superior do Trabalho', baseUrl: 'https://www.tst.jus.br', tipo: 'TRT', usaCaptcha: false, scraperConfig: { caminho: '/consultas' } },
+  ];
+  for (const data of tribunais) {
+    await Tribunal.findOrCreate({ where: { codigo: data.codigo }, defaults: data });
+  }
+  logger.info('Seed: tribunais verificados');
+
+  const senhaHash = await bcrypt.hash('juridico123', 12);
+  await Advogado.findOrCreate({
+    where: { oab: 'SP123456' },
+    defaults: { oab: 'SP123456', nome: 'João Silva', email: 'joao.silva@exemplo.com', ativo: true, passwordHash: senhaHash },
+  });
+  logger.info('Seed: usuário admin verificado');
+};
+
 // Start server
 const startServer = async () => {
   try {
     await connectDatabase();
+    await autoSeed();
 
     notificationService.initialize(httpServer);
 
