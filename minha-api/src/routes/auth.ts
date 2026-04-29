@@ -4,7 +4,7 @@
 
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
-import { generateToken, generateRefreshToken, verifyToken, AuthPayload } from '../middleware/auth';
+import { generateToken, generateRefreshToken, verifyToken, blacklistToken, AuthPayload } from '../middleware/auth';
 import Advogado from '../models/Advogado';
 
 const router = Router();
@@ -204,9 +204,23 @@ router.post('/refresh', async (req: Request, res: Response) => {
 
 /**
  * POST /api/v1/auth/logout
- * Invalida o token (logout client-side + server-side acknowledgment)
+ * Invalida o token (logout client-side + server-side)
  */
-router.post('/logout', (_req: Request, res: Response) => {
+router.post('/logout', (req: Request, res: Response) => {
+  const authHeader = req.headers.authorization;
+
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      const token = authHeader.split(' ')[1];
+      const decoded = verifyToken(token, false);
+      if (decoded.jti) {
+        blacklistToken(decoded.jti, false);
+      }
+    } catch {
+      // Token inválido já expira ou é inválido
+    }
+  }
+
   res.json({ mensagem: 'Logout realizado com sucesso.' });
 });
 

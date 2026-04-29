@@ -70,8 +70,17 @@ const redisConfig = {
   enableOfflineQueue: false,
 };
 
-// Create Redis instance
-const redisClient = new Redis(redisConfig);
+const redisUrl = process.env.REDIS_URL;
+
+// Create Redis instance (prioritize REDIS_URL when provided)
+const redisClient = redisUrl
+  ? new Redis(redisUrl, {
+    retryStrategy: redisConfig.retryStrategy,
+    maxRetriesPerRequest: redisConfig.maxRetriesPerRequest,
+    lazyConnect: redisConfig.lazyConnect,
+    enableOfflineQueue: redisConfig.enableOfflineQueue,
+  })
+  : new Redis(redisConfig);
 
 // Create memory fallback
 const memoryCache = new MemoryCache();

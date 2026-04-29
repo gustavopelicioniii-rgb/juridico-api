@@ -8,7 +8,7 @@
 import { BaseTribunalAdapter, DadosProcesso, DadosParte, DadosMovimentacao, ResultadoBusca } from './ITribunalAdapter';
 import logger from '../config/logger';
 import axios from 'axios';
-import cheerio from 'cheerio';
+import { load } from 'cheerio';
 
 export class TRFAdapter extends BaseTribunalAdapter {
   codigo = 'TRF';
@@ -57,7 +57,7 @@ export class TRFAdapter extends BaseTribunalAdapter {
    * Parseia HTML do TRF
    */
   private parseHtml(html: string, numero: string): DadosProcesso {
-    const $ = cheerio.load(html);
+    const $ = load(html);
     
     const processo: any = {
       numero,

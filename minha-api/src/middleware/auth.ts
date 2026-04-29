@@ -35,6 +35,31 @@ if (!JWT_SECRET) {
 const ACCESS_EXPIRES_IN_SECONDS = 3600;   // 1 hour
 const REFRESH_EXPIRES_IN_SECONDS = 604800; // 7 days
 
+// In-memory token blacklist (use Redis in production for multi-instance)
+const tokenBlacklist = new Set<string>();
+const REFRESH_TOKEN_BLACKLIST_PREFIX = 'blacklist:refresh:';
+
+/**
+ * Adiciona um token à blacklist
+ */
+export function blacklistToken(jti: string, isRefresh = false): void {
+  if (isRefresh) {
+    tokenBlacklist.add(REFRESH_TOKEN_BLACKLIST_PREFIX + jti);
+  } else {
+    tokenBlacklist.add(jti);
+  }
+}
+
+/**
+ * Verifica se um token está na blacklist
+ */
+export function isTokenBlacklisted(jti: string, isRefresh = false): boolean {
+  if (isRefresh) {
+    return tokenBlacklist.has(REFRESH_TOKEN_BLACKLIST_PREFIX + jti);
+  }
+  return tokenBlacklist.has(jti);
+}
+
 /**
  * Gera token de acesso JWT
  */
@@ -74,6 +99,11 @@ export function verifyToken(token: string, isRefresh = false): AuthPayload {
   }
   if (!isRefresh && decoded.type === 'refresh') {
     throw new Error('REFRESH_TOKEN_NOT_ALLOWED_HERE');
+  }
+
+  // Verifica blacklist
+  if (decoded.jti && isTokenBlacklisted(decoded.jti, isRefresh)) {
+    throw new Error('TOKEN_REVOKED');
   }
 
   return decoded;

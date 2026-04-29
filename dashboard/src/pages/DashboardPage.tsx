@@ -10,18 +10,22 @@ import {
   Loader2,
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, CartesianGrid, XAxis, YAxis, Tooltip, Area } from 'recharts';
-import { dashboardService, processoService, jobService } from '../services/api';
+import { dashboardService, processoService, jobService, tribunalService } from '../services/api';
 import type { Processo, Job } from '../types/api';
 
-const mockMovimentacoes = [
-  { data: '2024-03-10', count: 12 },
-  { data: '2024-03-11', count: 8 },
-  { data: '2024-03-12', count: 15 },
-  { data: '2024-03-13', count: 6 },
-  { data: '2024-03-14', count: 18 },
-  { data: '2024-03-15', count: 9 },
-  { data: '2024-03-16', count: 14 },
-];
+const TRIBUNAIS_PAINEL = ['TJSP', 'TJMG', 'STJ', 'TRT2'];
+
+// Fallback com últimos 7 dias sem dados reais
+function generateEmptyMovimentacoes() {
+  const result = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    result.push({ data: d.toISOString().split('T')[0], count: 0 });
+  }
+  return result;
+}
+const mockEmptyMovimentacoes = generateEmptyMovimentacoes();
 
 function StatCard({ title, value, change, icon: Icon, trend }: { title: string; value: number; change: number; icon: React.ElementType; trend: 'up' | 'down' }) {
   return (
@@ -44,9 +48,9 @@ function StatCard({ title, value, change, icon: Icon, trend }: { title: string; 
 function ProcessCard({ processo }: { processo: Processo }) {
   const statusColors: Record<string, string> = {
     MONITORANDO: 'bg-brand-500/20 text-brand-400 border-brand-500/30',
-    ATIVO: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
     ARQUIVADO: 'bg-slate-500/20 text-slate-400 border-slate-500/30',
-    SUSPENSO: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
+    ERRO: 'bg-red-500/20 text-red-400 border-red-500/30',
+    ENCERRADO: 'bg-slate-500/20 text-slate-400 border-slate-500/30',
   };
 
   return (
@@ -77,23 +81,56 @@ export default function DashboardPage() {
   const [processos, setProcessos] = useState<Processo[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [movimentacoes, setMovimentacoes] = useState<{ data: string; count: number }[]>([]);
+  const [tribunalStatus, setTribunalStatus] = useState<Record<string, { status: string; tempo: number | null }>>({});
 
   useEffect(() => {
     Promise.all([
-      dashboardService.getStats().catch(() => null),
+      dashboardService.getStats().catch((e) => { setError('Erro ao carregar estatísticas'); return null; }),
       processoService.getAll({ limit: 6 }).catch(() => ({ processos: [] })),
-      jobService.getAll({ limite: 4 }).catch(() => []),
-    ]).then(([statsData, procData, jobsData]) => {
+      jobService.getAll({ limite: 4 }).catch(() => [] as Job[]),
+      dashboardService.getMovimentacoes(7).catch(() => [] as { data: string; count: number }[]),
+    ]).then(([statsData, procData, jobsData, movData]) => {
       if (statsData) setStats(statsData);
       if (procData?.processos) setProcessos(procData.processos);
       if (Array.isArray(jobsData)) setJobs(jobsData);
+      if (Array.isArray(movData)) setMovimentacoes(movData);
     }).finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    tribunalService.getBatchStatus(TRIBUNAIS_PAINEL)
+      .then((results) => {
+        const map: Record<string, { status: string; tempo: number | null }> = {};
+        results.forEach((r: any) => { map[r.codigo] = { status: r.status, tempo: r.tempo }; });
+        setTribunalStatus(map);
+      })
+      .catch(() => {});
   }, []);
 
   if (loading) {
     return (
       <div className="flex items-center justify-center py-24">
         <Loader2 className="w-8 h-8 animate-spin text-brand-500" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <div className="glass rounded-2xl p-8 text-center max-w-md">
+          <AlertTriangle className="w-12 h-12 text-red-400 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-white mb-2">Algo deu errado</h3>
+          <p className="text-slate-400 mb-4">{error}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-brand-500 text-white rounded-lg hover:bg-brand-600 transition-colors"
+          >
+            Tentar novamente
+          </button>
+        </div>
       </div>
     );
   }
@@ -153,7 +190,7 @@ export default function DashboardPage() {
           </div>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={mockMovimentacoes}>
+              <AreaChart data={movimentacoes.length > 0 ? movimentacoes : mockEmptyMovimentacoes}>
                 <defs>
                   <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#5478ff" stopOpacity={0.3} />
@@ -225,20 +262,20 @@ export default function DashboardPage() {
           </div>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {[
-            { nome: 'TJ-SP', status: 'online', tempo: '124ms' },
-            { nome: 'TJ-MG', status: 'online', tempo: '289ms' },
-            { nome: 'STJ', status: 'online', tempo: '201ms' },
-            { nome: 'TRT-2', status: 'degraded', tempo: '1.2s' },
-          ].map((tribunal) => (
-            <div key={tribunal.nome} className="glass-light rounded-xl p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <div className={`w-2 h-2 rounded-full ${tribunal.status === 'online' ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-                <span className="text-sm font-medium text-slate-300">{tribunal.nome}</span>
+          {TRIBUNAIS_PAINEL.map((codigo) => {
+            const info = tribunalStatus[codigo];
+            const online = info?.status === 'ONLINE';
+            const tempo = info?.tempo != null ? `${info.tempo}ms` : '—';
+            return (
+              <div key={codigo} className="glass-light rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className={`w-2 h-2 rounded-full ${online ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                  <span className="text-sm font-medium text-slate-300">{codigo}</span>
+                </div>
+                <p className="text-xs text-slate-500">{info ? tempo : 'Carregando...'}</p>
               </div>
-              <p className="text-xs text-slate-500">{tribunal.tempo}</p>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>

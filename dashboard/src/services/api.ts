@@ -1,7 +1,10 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 
+/** Busca por OAB / refresh em tribunal pode ultrapassar 30s (DataJud + persistência). */
+const LONG_OPERATION_TIMEOUT_MS = 300_000;
+
 const api = axios.create({
-  baseURL: '/api/v1',
+  baseURL: `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'}/api/v1`,
   timeout: 30000,
 });
 
@@ -101,8 +104,8 @@ export const advogadoService = {
 };
 
 export const processoService = {
-  getAll: async (params?: { page?: number; limit?: number; tribunalId?: string }) => {
-    const { data } = await api.get<{ processos: any[]; total: number }>('/processos', { params });
+  getAll: async (params?: { page?: number; limit?: number; tribunalId?: string; advogadoId?: string; status?: string }) => {
+    const { data } = await api.get<{ processos: any[]; pagination: any }>('/processos', { params });
     return data;
   },
 
@@ -123,24 +126,34 @@ export const processoService = {
   },
 
   delete: async (id: string) => {
-    await api.delete(`/processos/${id}`);
+    const { data } = await api.delete<{ mensagem: string }>(`/processos/${id}`);
+    return data;
   },
 
   search: async (tribunalCodigo: string, numero: string) => {
-    const { data } = await api.post<any>(`/tribunais/${tribunalCodigo}/buscar`, { numeroProcesso: numero });
+    const { data } = await api.post<any>(
+      `/tribunais/${tribunalCodigo}/buscar`,
+      { numeroProcesso: numero },
+      { timeout: LONG_OPERATION_TIMEOUT_MS }
+    );
     return data;
   },
 
   searchByOAB: async (tribunalCodigo: string, params: { oab: string; nome?: string; advogadoId?: string }) => {
     const { data } = await api.post<{ processos: any[]; totalEncontrados: number }>(
       `/tribunais/${tribunalCodigo}/buscar-oab`,
-      params
+      params,
+      { timeout: LONG_OPERATION_TIMEOUT_MS }
     );
     return data;
   },
 
   refresh: async (tribunalCodigo: string, numero: string) => {
-    const { data } = await api.post<any>(`/tribunais/${tribunalCodigo}/processos/${numero}/refresh`);
+    const { data } = await api.post<any>(
+      `/tribunais/${tribunalCodigo}/processos/${encodeURIComponent(numero)}/refresh`,
+      {},
+      { timeout: LONG_OPERATION_TIMEOUT_MS }
+    );
     return data;
   },
 
@@ -176,18 +189,6 @@ export const monitoramentoService = {
 
   delete: async (processoId: string) => {
     await api.delete(`/processos/${processoId}/monitorar`);
-  },
-};
-
-export const tribunalService = {
-  getAll: async () => {
-    const { data } = await api.get<{ tribunais: any[] }>('/tribunais');
-    return data.tribunais;
-  },
-
-  getStatus: async (codigo: string) => {
-    const { data } = await api.get<any>(`/tribunais/${codigo}/status`);
-    return data;
   },
 };
 
@@ -234,5 +235,32 @@ export const dashboardService = {
       totalMovimentacoesHoje: number;
     }>('/dashboard/stats');
     return data;
+  },
+
+  getMovimentacoes: async (dias = 7) => {
+    const { data } = await api.get<{ movimentacoes: { data: string; count: number }[] }>(
+      '/dashboard/movimentacoes',
+      { params: { dias } }
+    );
+    return data.movimentacoes;
+  },
+};
+
+export const tribunalService = {
+  getAll: async () => {
+    const { data } = await api.get<{ tribunais: any[] }>('/tribunais');
+    return data.tribunais;
+  },
+
+  getStatus: async (codigo: string) => {
+    const { data } = await api.get<any>(`/tribunais/${codigo}/status`);
+    return data;
+  },
+
+  getBatchStatus: async (codigos: string[]) => {
+    const { data } = await api.get<{ tribunais: any[] }>('/tribunais/batch-status', {
+      params: { codigos: codigos.join(',') },
+    });
+    return data.tribunais;
   },
 };

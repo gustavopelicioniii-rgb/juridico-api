@@ -318,11 +318,11 @@ export async function agendarScrapingBatch(
   items: ScrapeJobData[]
 ): Promise<Job<ScrapeJobData>[]> {
   const jobs = await scrapeQueue.addBulk(
-    items.map((item, index) => ({
+    items.map((item) => ({
       data: item,
       opts: {
         priority: item.prioridade || 2,
-        jobId: `${item.tribunalCodigo}-${item.numeroProcesso}-${Date.now()}-${index}`,
+        jobId: `${item.tribunalCodigo}-${item.numeroProcesso}-${item.tipo || 'PROCESSO'}`,
       },
     }))
   );

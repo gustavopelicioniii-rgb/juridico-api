@@ -10,7 +10,6 @@ export interface Advogado {
   id: string;
   nome: string;
   oab: string;
-  uf: string;
   telefone?: string;
   email?: string;
   ativo: boolean;
@@ -33,7 +32,7 @@ export interface Processo {
   distribuicao?: string;
   relator?: string;
   valorCausa?: number;
-  status: 'MONITORANDO' | 'ARQUIVADO' | 'SUSPENSO' | 'ATIVO' | 'ERRO' | 'ENCERRADO';
+  status: 'MONITORANDO' | 'ARQUIVADO' | 'ERRO' | 'ENCERRADO';
   ultimaAtualizacao?: string;
   primeiraInstancia?: string;
   dataAjuizamento?: string;

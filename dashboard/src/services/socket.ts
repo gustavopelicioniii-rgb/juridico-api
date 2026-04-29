@@ -25,7 +25,7 @@ class SocketService {
       return;
     }
 
-    this.socket = io({
+    this.socket = io(import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000', {
       auth: { token },
       transports: ['websocket', 'polling'],
       reconnection: true,

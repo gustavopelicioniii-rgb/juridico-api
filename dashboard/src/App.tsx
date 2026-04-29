@@ -21,8 +21,23 @@ import ProcessosPage from './pages/ProcessosPage';
 import AdvogadosPage from './pages/AdvogadosPage';
 import NotificacoesPage from './pages/NotificacoesPage';
 
+interface User {
+  id: string;
+  nome: string;
+  oab: string;
+  email?: string;
+  role: string;
+}
+
 function Sidebar() {
   const location = useLocation();
+  const [user, setUser] = useState<User | null>(null);
+
+  useEffect(() => {
+    authService.getMe()
+      .then(setUser)
+      .catch(() => setUser(null));
+  }, []);
   
   const navItems = [
     { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -68,11 +83,11 @@ function Sidebar() {
       <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-brand-900/30">
         <div className="flex items-center gap-3 px-4 py-3">
           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-brand-400 to-brand-600 flex items-center justify-center text-white text-sm font-bold">
-            JD
+            {user?.nome ? user.nome.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : '??'}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-slate-200 truncate">João Direito</p>
-            <p className="text-xs text-slate-500">Administrador</p>
+            <p className="text-sm font-medium text-slate-200 truncate">{user?.nome || 'Carregando...'}</p>
+            <p className="text-xs text-slate-500">{user?.role || ''}</p>
           </div>
           <button
             onClick={() => {

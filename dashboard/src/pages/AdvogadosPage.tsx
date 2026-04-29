@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Search, Plus, Edit2, Trash2, FileText, Phone, Mail, X, Loader2, Search as SearchIcon } from 'lucide-react';
+import { isAxiosError } from 'axios';
 import { advogadoService, processoService } from '../services/api';
 import type { Advogado, Processo } from '../types/api';
 
@@ -121,7 +122,7 @@ export default function AdvogadosPage() {
   };
 
   const handleBuscarProcessos = async (advogado: Advogado) => {
-    const tribunal = window.prompt('Digite o código do tribunal (tjsp, tjmg, trt1, trf1, stj, stf):');
+    const tribunal = window.prompt('Digite o código do tribunal (ex.: TJSP, TJMG, TRT2, STJ):')?.trim().toUpperCase();
     if (!tribunal) return;
     
     try {
@@ -139,7 +140,11 @@ export default function AdvogadosPage() {
       }
     } catch (err) {
       console.error('Erro ao buscar processos:', err);
-      alert('Erro ao buscar processos no tribunal');
+      if (isAxiosError(err) && (err.code === 'ECONNABORTED' || err.message.includes('timeout'))) {
+        alert('A consulta passou do tempo limite (5 minutos). A API pode ainda estar processando — aguarde e tente de novo.');
+      } else {
+        alert('Erro ao buscar processos no tribunal');
+      }
     }
   };
 
@@ -397,7 +402,7 @@ export default function AdvogadosPage() {
                           <p className="text-sm text-slate-400 mt-1">{processo.tribunalNome || processo.tribunalCodigo}</p>
                         </div>
                         <span className={`px-2 py-1 rounded-lg text-xs font-medium ${
-                          processo.status === 'ATIVO' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-500/20 text-slate-400'
+                          processo.status === 'MONITORANDO' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-500/20 text-slate-400'
                         }`}>
                           {processo.status}
                         </span>

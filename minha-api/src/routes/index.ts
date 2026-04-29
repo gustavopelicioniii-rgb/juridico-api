@@ -1,5 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { Op } from 'sequelize';
+import { sequelize } from '../models';
+import '../models';
 import Advogado from '../models/Advogado';
 import Tribunal from '../models/Tribunal';
 import Processo from '../models/Processo';
@@ -10,19 +12,126 @@ import Job from '../models/Job';
 import Notification from '../models/Notification';
 import TribunalService from '../services/TribunalService';
 import { authRouter } from './auth';
-import { authMiddleware } from '../middleware/auth';
+import { authMiddleware, requireRole } from '../middleware/auth';
+import { cache, CACHE_TTL, CACHE_KEYS } from '../config/redis';
+import logger from '../config/logger';
 
 const router = Router();
 
+const getRequestId = (req: Request): string | undefined => {
+  const withRequestId = req as Request & { requestId?: string };
+  return withRequestId.requestId;
+};
+
+const logRouteError = (req: Request, route: string, error: unknown) => {
+  const err = error as {
+    name?: string;
+    message?: string;
+    stack?: string;
+    original?: { code?: string; message?: string };
+    code?: string;
+  };
+
+  logger.error('Route failure', {
+    route,
+    method: req.method,
+    requestId: getRequestId(req),
+    errorName: err?.name,
+    errorMessage: err?.message,
+    dbCode: err?.original?.code ?? err?.code,
+    dbMessage: err?.original?.message,
+    stack: err?.stack,
+  });
+};
+
 // Rotas de autenticação (públicas)
 router.use('/auth', authRouter);
+
+// ==================== ROTAS PÚBLICAS (sem auth) ====================
+
+router.get('/dashboard/movimentacoes', async (req: Request, res: Response) => {
+  try {
+    const { dias = 7 } = req.query;
+
+    const agora = new Date();
+    const inicio = new Date(agora);
+    inicio.setDate(inicio.getDate() - Number(dias));
+
+    type MovimentacaoAgg = { data: string; count: number };
+    const movimentacoes = await Movimentacao.findAll({
+      where: {
+        createdAt: {
+          [Op.gte]: inicio,
+        },
+      },
+      attributes: [
+        [sequelize.fn('DATE', sequelize.col('created_at')), 'data'],
+        [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
+      ],
+      group: [sequelize.fn('DATE', sequelize.col('created_at'))],
+      order: [[sequelize.fn('DATE', sequelize.col('created_at')), 'ASC']],
+      raw: true,
+    }) as unknown as MovimentacaoAgg[];
+
+    const resultado: { data: string; count: number }[] = [];
+    for (let i = 0; i < Number(dias); i++) {
+      const d = new Date(inicio);
+      d.setDate(d.getDate() + i);
+      const dataStr = d.toISOString().split('T')[0];
+      const encontrado = movimentacoes.find((m) => m.data === dataStr);
+      resultado.push({ data: dataStr, count: encontrado ? Number(encontrado.count) : 0 });
+    }
+
+    res.json({ movimentacoes: resultado });
+  } catch (error) {
+    logRouteError(req, 'GET /dashboard/movimentacoes', error);
+    res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar movimentações.' } });
+  }
+});
+
+router.get('/tribunais/batch-status', async (req: Request, res: Response) => {
+  try {
+    const { codigos } = req.query;
+    const listaCodigos = codigos ? (codigos as string).split(',') : [];
+
+    if (listaCodigos.length === 0) {
+      return res.status(400).json({
+        erro: { codigo: 'VALIDATION_ERROR', mensagem: 'Informe os códigos dos tribunais.' }
+      });
+    }
+
+    const { registry } = await import('../tribunais');
+    const results = await Promise.allSettled(
+      listaCodigos.map(async (codigo: string) => {
+        const adapter = registry.get(codigo.toUpperCase());
+        if (!adapter) return { codigo, status: 'UNKNOWN', tempo: null };
+        const start = Date.now();
+        try {
+          const healthy = await adapter.healthCheck();
+          return { codigo, status: healthy ? 'ONLINE' : 'OFFLINE', tempo: Date.now() - start };
+        } catch {
+          return { codigo, status: 'OFFLINE', tempo: Date.now() - start };
+        }
+      })
+    );
+
+    const tribunais = results.map((r, i) => {
+      if (r.status === 'fulfilled') return r.value;
+      return { codigo: listaCodigos[i], status: 'UNKNOWN', tempo: null };
+    });
+
+    res.json({ tribunais });
+  } catch (error) {
+    res.status(500).json({ erro: { codigo: 'BATCH_STATUS_ERROR', mensagem: 'Erro ao verificar status.' } });
+  }
+});
 
 // Todas as rotas abaixo requerem autenticação
 router.use(authMiddleware);
 
 // ==================== ADVOGADOS ====================
 
-router.get('/advogados', async (_req: Request, res: Response) => {
+router.get('/advogados', async (req: Request, res: Response) => {
   try {
     const advogados = await Advogado.findAll({
       where: { ativo: true },
@@ -30,6 +139,7 @@ router.get('/advogados', async (_req: Request, res: Response) => {
     });
     res.json({ advogados });
   } catch (error) {
+    logRouteError(req, 'GET /advogados', error);
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar advogados.' } });
   }
 });
@@ -61,17 +171,26 @@ router.post('/advogados', async (req: Request, res: Response) => {
     
     const advogado = await Advogado.create({ oab, nome, email });
 
-    const { default: AdvogadoOnboardingService } = await import('../services/AdvogadoOnboardingService');
-    void AdvogadoOnboardingService.start({
-      advogadoId: advogado.id,
-      oab: advogado.oab,
-      nome: advogado.nome,
-      source: 'admin-create',
-      requestedBy: 'admin',
-    });
+    // Onboarding é assíncrono e não deve bloquear a criação do advogado
+    import('../services/AdvogadoOnboardingService')
+      .then(({ default: AdvogadoOnboardingService }) => {
+        AdvogadoOnboardingService.start({
+          advogadoId: advogado.id,
+          oab: advogado.oab,
+          nome: advogado.nome,
+          source: 'admin-create',
+          requestedBy: 'admin',
+        }).catch((err) => {
+          console.error('Onboarding falhou:', err);
+        });
+      })
+      .catch((err) => {
+        console.error('Serviço de onboarding indisponível:', err);
+      });
 
     res.status(201).json({ advogado });
   } catch (error) {
+    logRouteError(req, 'POST /advogados', error);
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao criar advogado.' } });
   }
 });
@@ -91,7 +210,7 @@ router.get('/advogados/:id/onboarding-status', async (req: Request, res: Respons
   }
 });
 
-router.put('/advogados/:id', async (req: Request, res: Response) => {
+router.put('/advogados/:id', requireRole('ADMIN'), async (req: Request, res: Response) => {
   try {
     const advogado = await Advogado.findByPk(req.params.id);
     if (!advogado) {
@@ -118,43 +237,6 @@ router.delete('/advogados/:id', async (req: Request, res: Response) => {
     res.json({ mensagem: 'Advogado desativado com sucesso.' });
   } catch (error) {
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao desativar advogado.' } });
-  }
-});
-
-router.get('/advogados/:id/processos', async (req: Request, res: Response) => {
-  try {
-    const advogado = await Advogado.findByPk(req.params.id);
-    if (!advogado) {
-      return res.status(404).json({ erro: { codigo: 'ADVOGADO_NAO_ENCONTRADO', mensagem: 'Advogado não encontrado.' } });
-    }
-    
-    const processos = await Processo.findAll({
-      where: { advogadoId: req.params.id },
-      include: [
-        { model: Tribunal, as: 'tribunal' },
-        { model: Monitoramento, as: 'monitoramentos' },
-      ],
-      order: [['updatedAt', 'DESC']],
-    });
-    
-    res.json({ processos });
-  } catch (error) {
-    res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar processos.' } });
-  }
-});
-
-router.get('/advogados/:id/onboarding-status', async (req: Request, res: Response) => {
-  try {
-    const advogado = await Advogado.findByPk(req.params.id);
-    if (!advogado) {
-      return res.status(404).json({ erro: { codigo: 'ADVOGADO_NAO_ENCONTRADO', mensagem: 'Advogado não encontrado.' } });
-    }
-
-    const { default: AdvogadoOnboardingService } = await import('../services/AdvogadoOnboardingService');
-    const status = await AdvogadoOnboardingService.getStatusByAdvogadoId(advogado.id);
-    res.json({ status });
-  } catch (error) {
-    res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar status de onboarding.' } });
   }
 });
 
@@ -192,6 +274,7 @@ router.get('/processos', async (req: Request, res: Response) => {
       },
     });
   } catch (error) {
+    logRouteError(req, 'GET /processos', error);
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar processos.' } });
   }
 });
@@ -264,7 +347,7 @@ router.post('/processos', async (req: Request, res: Response) => {
   }
 });
 
-router.delete('/processos/:id', async (req: Request, res: Response) => {
+router.delete('/processos/:id', requireRole('ADMIN'), async (req: Request, res: Response) => {
   try {
     const processo = await Processo.findByPk(req.params.id);
     if (!processo) {
@@ -429,21 +512,35 @@ router.delete('/processos/:id/monitorar', async (req: Request, res: Response) =>
 
 // ==================== TRIBUNAIS ====================
 
-router.get('/tribunais', async (_req: Request, res: Response) => {
+router.get('/tribunais', async (req: Request, res: Response) => {
   try {
+    const cacheKey = CACHE_KEYS.TRIBUNAL_STATUS;
+
+    // Try cache first
+    const cached = await cache.get(cacheKey);
+    if (cached) {
+      return res.json({ tribunais: JSON.parse(cached), cached: true });
+    }
+
     const tribunais = await Tribunal.findAll({
       where: { ativo: true },
       order: [['nome', 'ASC']],
     });
+
+    // Cache the result
+    await cache.set(cacheKey, JSON.stringify(tribunais), CACHE_TTL.TRIBUNAL_STATUS);
+
+    res.set('Cache-Control', 'public, max-age=300');
     res.json({ tribunais });
   } catch (error) {
+    logRouteError(req, 'GET /tribunais', error);
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar tribunais.' } });
   }
 });
 
 // ==================== TRIBUNAIS - INTEGRAÇÃO ====================
 
-router.post('/tribunais/:codigo/buscar', async (req: Request, res: Response) => {
+router.post('/tribunais/:codigo/buscar', requireRole('ADMIN', 'USER'), async (req: Request, res: Response) => {
   try {
     const { codigo } = req.params;
     const { numeroProcesso, advogadoId } = req.body;
@@ -594,6 +691,7 @@ router.get('/jobs', async (req: Request, res: Response) => {
 
     res.json({ jobs });
   } catch (error) {
+    logRouteError(req, 'GET /jobs', error);
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar jobs.' } });
   }
 });
@@ -681,6 +779,34 @@ router.put('/notifications/read-all', async (req: Request, res: Response) => {
   }
 });
 
+// ==================== ADVOGADOS / PROCESSOS ====================
+
+router.get('/advogados/:id/processos', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { tribunalId, status, limite = 50 } = req.query;
+
+    const where: any = { advogadoId: id };
+    if (tribunalId) where.tribunalId = tribunalId;
+    if (status) where.status = status;
+
+    const processos = await Processo.findAll({
+      where,
+      include: [
+        { model: Advogado, as: 'advogado' },
+        { model: Tribunal, as: 'tribunal' },
+      ],
+      order: [['updatedAt', 'DESC']],
+      limit: Number(limite),
+    });
+
+    res.json({ processos });
+  } catch (error) {
+    logRouteError(req, 'GET /advogados/:id/processos', error);
+    res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar processos.' } });
+  }
+});
+
 // ==================== DASHBOARD ====================
 
 router.get('/dashboard/stats', async (req: Request, res: Response) => {
@@ -715,6 +841,7 @@ router.get('/dashboard/stats', async (req: Request, res: Response) => {
       totalMovimentacoesHoje,
     });
   } catch (error) {
+    logRouteError(req, 'GET /dashboard/stats', error);
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar estatísticas.' } });
   }
 });

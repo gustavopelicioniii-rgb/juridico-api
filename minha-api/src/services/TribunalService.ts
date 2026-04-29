@@ -171,20 +171,41 @@ class TribunalService {
       return { novas: 0, total: movimentacoes.length };
     }
 
-    const movimentacoesData = movimentacoesNovas.map(m => ({
+    // Apenas movimentações dos últimos 30 dias são marcadas como "nova"
+    // para evitar marcar todo o histórico como "novo" na primeira vez
+    const dataLimiteNova = new Date();
+    dataLimiteNova.setDate(dataLimiteNova.getDate() - 30);
+
+    // Deduplica movimentações com mesma data + descrição dentro do mesmo scraping.
+    // Isso evita inserir linhas duplicadas quando o tribunal retorna eventos repetidos.
+    const chavesMovimentacoes = new Set<string>();
+    const movimentacoesSemDuplicidade = movimentacoesNovas.filter((m) => {
+      const chave = `${m.data.toISOString()}::${m.descricao.trim().toLowerCase()}`;
+      if (chavesMovimentacoes.has(chave)) {
+        return false;
+      }
+      chavesMovimentacoes.add(chave);
+      return true;
+    });
+
+    const movimentacoesData = movimentacoesSemDuplicidade.map(m => ({
       processoId,
       descricao: m.descricao,
       data: m.data,
       origem: m.origem,
       dadosOriginais: m.dadosOriginais,
-      nova: true,
+      nova: m.data >= dataLimiteNova,
     }));
 
     await Movimentacao.bulkCreate(movimentacoesData, { transaction: t });
 
-    logger.info(`Salvas ${movimentacoesNovas.length} novas movimentações para processo ${processoId}`);
+    const totalNovasRecentes = movimentacoesData.filter(m => m.nova).length;
+    const totalDuplicadasIgnoradas = movimentacoesNovas.length - movimentacoesSemDuplicidade.length;
+    logger.info(
+      `Salvas ${movimentacoesSemDuplicidade.length} movimentações para processo ${processoId} (${totalNovasRecentes} recentes, ${totalDuplicadasIgnoradas} duplicadas ignoradas)`
+    );
 
-    return { novas: movimentacoesNovas.length, total: movimentacoes.length };
+    return { novas: movimentacoesSemDuplicidade.length, total: movimentacoes.length };
   }
   
   /**

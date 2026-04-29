@@ -1,2 +1,4 @@
-// Server entry point - re-exports from app.ts
-export { app, httpServer } from './app';
+// Production entry point — compiled to dist/server.js by tsc
+import { startServer } from './app';
+
+startServer();

@@ -1,6 +1,7 @@
 import { sequelize } from '../src/models';
 import Tribunal from '../src/models/Tribunal';
 import Advogado from '../src/models/Advogado';
+import bcrypt from 'bcryptjs';
 
 const seedTribunais = async (): Promise<void> => {
   const tribunaisData = [
@@ -56,6 +57,7 @@ const seedTribunais = async (): Promise<void> => {
 };
 
 const seedSampleAdvogado = async (): Promise<void> => {
+  const senhaHash = await bcrypt.hash('juridico123', 12);
   const [advogado, created] = await Advogado.findOrCreate({
     where: { oab: 'SP123456' },
     defaults: {
@@ -63,6 +65,7 @@ const seedSampleAdvogado = async (): Promise<void> => {
       nome: 'João Silva',
       email: 'joao.silva@exemplo.com',
       ativo: true,
+      passwordHash: senhaHash,
     },
   });
   console.log(`${created ? '✅ Created' : '📝 Found'}: Advogado ${advogado.nome}`);

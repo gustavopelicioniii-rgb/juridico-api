@@ -5,6 +5,8 @@ import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { z } from 'zod';
+import compression from 'compression';
+import etag from 'etag';
 
 import logger from './config/logger';
 import { connectDatabase, sequelize } from './config/database';
@@ -22,7 +24,23 @@ const PORT = process.env.PORT || 3000;
 const httpServer = createServer(app);
 
 // Security middleware
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      scriptSrc: ["'self'"],
+      connectSrc: ["'self'", "ws:", "wss:", "http://localhost:*", "https://localhost:*"],
+      imgSrc: ["'self'", "data:", "https:"],
+      objectSrc: ["'none'"],
+      upgradeInsecureRequests: [],
+    },
+  },
+}));
+
+// Compression
+app.use(compression());
 
 // CORS restrito — apenas origens conhecidas em produção
 const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173,http://localhost:5174,http://localhost:3000').split(',');

@@ -64,9 +64,7 @@ export default function ProcessosPage() {
 
   const statusColors: Record<string, string> = {
     MONITORANDO: 'bg-brand-500/20 text-brand-400 border-brand-500/30',
-    ATIVO: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
     ARQUIVADO: 'bg-slate-500/20 text-slate-400 border-slate-500/30',
-    SUSPENSO: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
     ERRO: 'bg-red-500/20 text-red-400 border-red-500/30',
     ENCERRADO: 'bg-slate-500/20 text-slate-400 border-slate-500/30',
   };
@@ -103,7 +101,7 @@ export default function ProcessosPage() {
   const handleDelete = async (id: string) => {
     if (!confirm('Tem certeza que deseja remover este processo?')) return;
     try {
-      await (processoService as any).delete(id);
+      await processoService.delete(id);
       fetchData();
     } catch (err) {
       alert('Erro ao remover processo');
@@ -170,9 +168,7 @@ export default function ProcessosPage() {
             >
               <option value="all">Todos os Status</option>
               <option value="MONITORANDO">Monitorando</option>
-              <option value="ATIVO">Ativo</option>
               <option value="ARQUIVADO">Arquivado</option>
-              <option value="SUSPENSO">Suspenso</option>
               <option value="ERRO">Erro</option>
               <option value="ENCERRADO">Encerrado</option>
             </select>

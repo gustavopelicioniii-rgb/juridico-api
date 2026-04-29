@@ -134,7 +134,7 @@ export class TJMGAdapter extends BaseTribunalAdapter {
     formData.append('pageurl', pageUrl);
     
     // Submit CAPTCHA
-    const submitResponse = await fetch('http://2captcha.com/in.php', {
+    const submitResponse = await fetch('https://2captcha.com/in.php', {
       method: 'POST',
       body: formData,
     });
@@ -151,7 +151,7 @@ export class TJMGAdapter extends BaseTribunalAdapter {
       await new Promise(resolve => setTimeout(resolve, 1000));
       
       const resultResponse = await fetch(
-        `http://2captcha.com/res.php?key=${this.apiKey2Captcha}&action=get&id=${captchaId}`
+        `https://2captcha.com/res.php?key=${this.apiKey2Captcha}&action=get&id=${captchaId}`
       );
       const resultText = await resultResponse.text();
       
