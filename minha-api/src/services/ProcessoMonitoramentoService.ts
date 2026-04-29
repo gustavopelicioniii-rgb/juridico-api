@@ -7,9 +7,9 @@
 
 import { Op } from 'sequelize';
 import { registry } from '../tribunais';
-// ProcessoEnriquecimentoService removed - stub functions
-const buscarPorOABEnriquecido = async (_tribunal: string, _oab: string): Promise<any[]> => [];
-const salvarLoteProcessos = async (_processos: any[]): Promise<{ novos: number; atualizados: number }> => ({ novos: 0, atualizados: 0 });
+import ProcessoEnriquecimentoService from './ProcessoEnriquecimentoService';
+const buscarPorOABEnriquecido = ProcessoEnriquecimentoService.buscarPorOABEnriquecido.bind(ProcessoEnriquecimentoService);
+const salvarLoteProcessos = ProcessoEnriquecimentoService.salvarLoteProcessos.bind(ProcessoEnriquecimentoService);
 import { Processo, OABMonitorada } from '../models';
 import notificationService from '../websocket/NotificationService';
 import logger from '../config/logger';
