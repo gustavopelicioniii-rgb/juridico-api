@@ -42,9 +42,6 @@ const configMap: Record<string, DatabaseConfig> = {
     username: process.env.DB_USER || 'postgres',
     password: process.env.DB_PASSWORD || '',
     logging: false,
-    dialectOptions: process.env.DATABASE_URL
-      ? { ssl: { rejectUnauthorized: false } }
-      : undefined,
     pool: {
       max: 20,
       min: 5,
@@ -79,6 +76,9 @@ export const sequelize = new Sequelize({
     timestamps: true,
     underscored: true,
   },
+  dialectOptions: process.env.DATABASE_URL
+    ? { ssl: { rejectUnauthorized: false } }
+    : undefined,
 });
 
 export const connectDatabase = async (): Promise<void> => {
