@@ -1,44 +1,25 @@
 import { useState, useEffect } from 'react';
-import { Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
+import { Routes, Route, Link, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
   FileText,
   Users,
   Bell,
   Settings,
-  LogOut,
   Search,
   ChevronRight,
   Scale,
 } from 'lucide-react';
 import { socketService } from './services/socket';
-import { authService } from './services/api';
 import type { Notification } from './types/api';
-import LoginPage from './pages/LoginPage';
-import RegisterPage from './pages/RegisterPage';
 import DashboardPage from './pages/DashboardPage';
 import ProcessosPage from './pages/ProcessosPage';
 import AdvogadosPage from './pages/AdvogadosPage';
 import NotificacoesPage from './pages/NotificacoesPage';
 
-interface User {
-  id: string;
-  nome: string;
-  oab: string;
-  email?: string;
-  role: string;
-}
-
 function Sidebar() {
   const location = useLocation();
-  const [user, setUser] = useState<User | null>(null);
 
-  useEffect(() => {
-    authService.getMe()
-      .then(setUser)
-      .catch(() => setUser(null));
-  }, []);
-  
   const navItems = [
     { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
     { path: '/processos', icon: FileText, label: 'Processos' },
@@ -79,28 +60,6 @@ function Sidebar() {
           );
         })}
       </nav>
-
-      <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-brand-900/30">
-        <div className="flex items-center gap-3 px-4 py-3">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-brand-400 to-brand-600 flex items-center justify-center text-white text-sm font-bold">
-            {user?.nome ? user.nome.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : '??'}
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-slate-200 truncate">{user?.nome || 'Carregando...'}</p>
-            <p className="text-xs text-slate-500">{user?.role || ''}</p>
-          </div>
-          <button
-            onClick={() => {
-              authService.logout();
-              window.location.href = '/login';
-            }}
-            className="p-2 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-            title="Sair"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
     </aside>
   );
 }
@@ -168,43 +127,24 @@ function TopBar() {
   );
 }
 
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const token = localStorage.getItem('token');
-  if (!token) {
-    return <Navigate to="/login" replace />;
-  }
-  return <>{children}</>;
-}
-
 export default function App() {
   return (
     <div className="min-h-screen bg-dark-300">
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<RegisterPage />} />
-        <Route
-          path="/*"
-          element={
-            <ProtectedRoute>
-              <div className="flex">
-                <Sidebar />
-                <main className="flex-1 ml-64">
-                  <TopBar />
-                  <div className="p-6">
-                    <Routes>
-                      <Route path="/" element={<DashboardPage />} />
-                      <Route path="/processos" element={<ProcessosPage />} />
-                      <Route path="/advogados" element={<AdvogadosPage />} />
-                      <Route path="/notificacoes" element={<NotificacoesPage />} />
-                      <Route path="/configuracoes" element={<div className="text-slate-400">Configurações em breve...</div>} />
-                    </Routes>
-                  </div>
-                </main>
-              </div>
-            </ProtectedRoute>
-          }
-        />
-      </Routes>
+      <div className="flex">
+        <Sidebar />
+        <main className="flex-1 ml-64">
+          <TopBar />
+          <div className="p-6">
+            <Routes>
+              <Route path="/" element={<DashboardPage />} />
+              <Route path="/processos" element={<ProcessosPage />} />
+              <Route path="/advogados" element={<AdvogadosPage />} />
+              <Route path="/notificacoes" element={<NotificacoesPage />} />
+              <Route path="/configuracoes" element={<div className="text-slate-400">Configurações em breve...</div>} />
+            </Routes>
+          </div>
+        </main>
+      </div>
     </div>
   );
 }

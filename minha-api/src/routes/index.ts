@@ -126,9 +126,6 @@ router.get('/tribunais/batch-status', async (req: Request, res: Response) => {
   }
 });
 
-// Todas as rotas abaixo requerem autenticação
-router.use(authMiddleware);
-
 // ==================== ADVOGADOS ====================
 
 router.get('/advogados', async (req: Request, res: Response) => {
@@ -210,7 +207,7 @@ router.get('/advogados/:id/onboarding-status', async (req: Request, res: Respons
   }
 });
 
-router.put('/advogados/:id', requireRole('ADMIN'), async (req: Request, res: Response) => {
+router.put('/advogados/:id', async (req: Request, res: Response) => {
   try {
     const advogado = await Advogado.findByPk(req.params.id);
     if (!advogado) {
@@ -347,7 +344,7 @@ router.post('/processos', async (req: Request, res: Response) => {
   }
 });
 
-router.delete('/processos/:id', requireRole('ADMIN'), async (req: Request, res: Response) => {
+router.delete('/processos/:id', async (req: Request, res: Response) => {
   try {
     const processo = await Processo.findByPk(req.params.id);
     if (!processo) {
@@ -540,7 +537,7 @@ router.get('/tribunais', async (req: Request, res: Response) => {
 
 // ==================== TRIBUNAIS - INTEGRAÇÃO ====================
 
-router.post('/tribunais/:codigo/buscar', requireRole('ADMIN', 'USER'), async (req: Request, res: Response) => {
+router.post('/tribunais/:codigo/buscar', async (req: Request, res: Response) => {
   try {
     const { codigo } = req.params;
     const { numeroProcesso, advogadoId } = req.body;

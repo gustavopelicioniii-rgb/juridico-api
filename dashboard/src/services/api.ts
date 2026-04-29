@@ -1,4 +1,4 @@
-import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
+import axios from 'axios';
 
 /** Busca por OAB / refresh em tribunal pode ultrapassar 30s (DataJud + persistência). */
 const LONG_OPERATION_TIMEOUT_MS = 300_000;
@@ -7,26 +7,6 @@ const api = axios.create({
   baseURL: `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'}/api/v1`,
   timeout: 30000,
 });
-
-api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
-  const token = localStorage.getItem('token');
-  if (token && config.headers) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
-
-api.interceptors.response.use(
-  (response) => response,
-  async (error: AxiosError) => {
-    if (error.response?.status === 401) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('refreshToken');
-      window.location.href = '/login';
-    }
-    return Promise.reject(error);
-  }
-);
 
 export const authService = {
   login: async (oab: string, senha: string) => {
