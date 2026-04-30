@@ -17,6 +17,7 @@ import Tribunal from './models/Tribunal';
 import Advogado from './models/Advogado';
 import bcrypt from 'bcryptjs';
 import MonitoringService from './services/MonitoringService';
+import ProcessoMonitoramentoService from './services/ProcessoMonitoramentoService';
 import ngrokService from './services/NgrokService';
 import oabCacheService from './services/OABCacheService';
 
@@ -238,6 +239,7 @@ const gracefulShutdown = async (signal: string) => {
 
   try {
     MonitoringService.stop();
+    ProcessoMonitoramentoService.parar();
 
     await ngrokService.stop();
 
@@ -301,6 +303,12 @@ const startServer = async () => {
       logger.info(`MonitoringService enabled (interval: ${intervalMs}ms)`);
     } else {
       logger.info('MonitoringService disabled (ENABLE_MONITORING=false)');
+    }
+
+    // Inicia monitoramento de OABs cadastradas
+    if (process.env.ENABLE_OAB_MONITORING !== 'false') {
+      ProcessoMonitoramentoService.iniciar();
+      logger.info('ProcessoMonitoramentoService iniciado');
     }
 
     // Inicia tunel ngrok se configurado

@@ -7,15 +7,52 @@
 
 import { Op } from 'sequelize';
 import { registry } from '../tribunais';
-
-const buscarPorOABEnriquecido = async (oab: string, _completo: boolean): Promise<{ processos: any[] }> => ({ processos: [] });
-const salvarLoteProcessos = async (_processos: any[]): Promise<{ salvos: number; erros: number }> => ({ salvos: 0, erros: 0 });
+import TribunalService from './TribunalService';
 
 import { Processo, OABMonitorada } from '../models';
 import notificationService from '../websocket/NotificationService';
 import logger from '../config/logger';
 
 const INTERVALO_PADRAO_MS = 5 * 60 * 1000;
+
+/**
+ * Busca processos enriquecidos para uma OAB usando TribunalService
+ */
+async function buscarPorOABEnriquecido(oab: string, _completo: boolean): Promise<{ processos: any[] }> {
+  try {
+    const resultado = await TribunalService.buscarPorOABComCache(
+      oab,
+      'TJSP', // TJSP é o tribunal padrão para OABs de SP
+      undefined,
+      undefined,
+      false // usa cache se disponível
+    );
+    return { processos: resultado.processos };
+  } catch (error: any) {
+    logger.error(`[Monitoramento] Erro ao buscar processos enriquecidos: ${error.message}`);
+    return { processos: [] };
+  }
+}
+
+/**
+ * Salva múltiplos processos usando TribunalService
+ */
+async function salvarLoteProcessos(processos: any[]): Promise<{ salvos: number; erros: number }> {
+  let salvos = 0;
+  let erros = 0;
+
+  for (const proc of processos) {
+    try {
+      await TribunalService.buscarESalvarProcesso(proc.numeroProcesso, 'TJSP');
+      salvos++;
+    } catch (error: any) {
+      logger.warn(`[Monitoramento] Erro ao salvar processo ${proc.numeroProcesso}: ${error.message}`);
+      erros++;
+    }
+  }
+
+  return { salvos, erros };
+}
 
 interface StatusMonitoramento {
   rodando: boolean;
