@@ -1,6 +1,7 @@
 [build]
-  builder = "DOCKERFILE"
-  dockerfilePath = "minha-api/Dockerfile"
+  builder = "NIXPACKS"
+  buildCommand = "cd minha-api && npm install && npm run build"
+  outputDir = "minha-api/dist"
 
 [deploy]
-  startCommand = "node dist/server.js"
+  startCommand = "sh -c 'cd minha-api && node dist/server.js'"
