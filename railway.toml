@@ -1,6 +1,6 @@
 [build]
-  builder = "DOCKER"
-  dockerfilePath = "Dockerfile"
+  builder = "DOCKERFILE"
+  dockerfilePath = "minha-api/Dockerfile"
 
-[start]
-  command = "node dist/server.js"
+[deploy]
+  startCommand = "cd minha-api && node dist/server.js"
