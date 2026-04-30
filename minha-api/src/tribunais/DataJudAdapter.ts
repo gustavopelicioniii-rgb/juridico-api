@@ -168,7 +168,7 @@ export class DataJudAdapter extends BaseTribunalAdapter {
     }
   }
 
-  async buscarPorOAB(oab: string, _nome?: string): Promise<ResultadoBusca> {
+  async buscarPorOAB(oab: string, nome?: string): Promise<ResultadoBusca> {
     if (this.mockMode) {
       return this.gerarMockResultadoOAB(oab);
     }
@@ -176,22 +176,50 @@ export class DataJudAdapter extends BaseTribunalAdapter {
     // Extrai apenas o número da OAB (sem UF)
     const oabNumero = this.formatarOAB(oab);
 
-    logger.info(`DataJudAdapter[${this.codigo}] buscando por OAB: ${oabNumero} (original: ${oab})`);
+    logger.info(`DataJudAdapter[${this.codigo}] buscando por OAB: ${oabNumero} (original: ${oab}, nome: ${nome || 'não informado'})`);
 
     try {
       // Busca via wildcard no número do processo (a OAB está embutida no NUP)
-      // Usa size: 500 para capturar todos os processos
-      // IMPORTANTE: não usa formatação com zeros, usa o número direto
+      // Se nome informado, filtra também pelo nome do advogado
+      // Usa size: 200 para evitar sobrecarga - resultados são limitados pelo tribunal
+      let query: object;
+
+      if (nome && nome.trim().length > 0) {
+        // Busca por OAB + nome do advogado (mais preciso)
+        query = {
+          bool: {
+            must: [
+              { wildcard: { numeroProcesso: `*${oabNumero}*` } },
+              { match: { 'polo.advogados.nome': nome } }
+            ]
+          }
+        };
+        logger.info(`DataJudAdapter[${this.codigo}] Filtrando por nome: ${nome}`);
+      } else {
+        // Busca apenas por OAB (pode retornar processos de outros advogados com mesmo número)
+        query = { wildcard: { numeroProcesso: `*${oabNumero}*` } };
+      }
+
       const response = await this.client!.post<DataJudResponse>('/_search', {
-        query: {
-          wildcard: { numeroProcesso: `*${oabNumero}*` }
-        },
-        size: 500,
+        query,
+        size: 200,
         sort: [{ dataAjuizamento: { order: 'desc' } }],
       });
 
-      const hits = response.data.hits?.hits || [];
-      const total = hits.length;
+      let hits = response.data.hits?.hits || [];
+      let total = hits.length;
+
+      // Se nome foi usado e não encontrou resultados, tenta sem nome (fallback)
+      if (nome && nome.trim().length > 0 && total === 0) {
+        logger.info(`DataJudAdapter[${this.codigo}] Busca com nome não retornou resultados, tentando sem nome...`);
+        const fallbackResponse = await this.client!.post<DataJudResponse>('/_search', {
+          query: { wildcard: { numeroProcesso: `*${oabNumero}*` } },
+          size: 200,
+          sort: [{ dataAjuizamento: { order: 'desc' } }],
+        });
+        hits = fallbackResponse.data.hits?.hits || [];
+        total = hits.length;
+      }
 
       logger.info(`DataJudAdapter[${this.codigo}] OAB ${oabNumero}: ${total} processos encontrados`);
 

@@ -16,7 +16,20 @@ import logger from '../config/logger';
 import oabCacheService from './OABCacheService';
 
 const CACHE_TTL_MINUTES = 30;
-const MAX_PARALLEL_FETCHES = 5; // Numero maximo de buscas em paralelo
+const MAX_PARALLEL_FETCHES = 2; // Paralelo controlado para SQLite
+const ENRICHMENT_TIMEOUT_MS = 15000; // Timeout por processo (15s)
+
+/**
+ * Executa função com timeout
+ */
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, desc: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${desc} - timeout após ${timeoutMs}ms`)), timeoutMs)
+    ),
+  ]);
+}
 
 export interface ResultadoBuscaProcesso {
   processo: Processo;
@@ -321,28 +334,54 @@ class TribunalService {
 
     const resultado = await adapter.buscarPorOAB(oabNormalizada, nome);
     const numerosProcessos: string[] = [];
+    const enriquecidosComSucesso: string[] = [];
 
-    // Busca e salva processos em paralelo (batch de 5)
-    const processos = resultado.processos;
-    for (let i = 0; i < processos.length; i += MAX_PARALLEL_FETCHES) {
-      const batch = processos.slice(i, i + MAX_PARALLEL_FETCHES);
+    // Limita a 30 processos para evitar timeout
+    // Próximos processos serão enriquecidos sob demanda
+    const MAX_ENRICHMENT = 30;
+    const processosParaEnriquecer = resultado.processos.slice(0, MAX_ENRICHMENT);
+    const processosRestantes = resultado.processos.slice(MAX_ENRICHMENT);
+
+    logger.info(`[Cache OAB] ${resultado.processos.length} processos encontrados. Limitando enriquecimento a ${MAX_ENRICHMENT}`);
+
+    // Adiciona TODOS os números ao cache (enriquecidos ou não)
+    for (const proc of resultado.processos) {
+      numerosProcessos.push(proc.numeroProcesso);
+    }
+
+    // Busca e salva processos em paralelo (batch de MAX_PARALLEL_FETCHES)
+    for (let i = 0; i < processosParaEnriquecer.length; i += MAX_PARALLEL_FETCHES) {
+      const batch = processosParaEnriquecer.slice(i, i + MAX_PARALLEL_FETCHES);
       const results = await Promise.allSettled(
         batch.map(proc =>
-          this.buscarESalvarProcesso(proc.numeroProcesso, tribunalCodigo, advogadoId)
-            .then(() => proc.numeroProcesso)
-            .catch(error => {
-              logger.warn(`Falha ao processar processo ${proc.numeroProcesso}: ${error}`);
-              return null;
-            })
+          withTimeout(
+            this.buscarESalvarProcesso(proc.numeroProcesso, tribunalCodigo, advogadoId)
+              .then(() => proc.numeroProcesso),
+            ENRICHMENT_TIMEOUT_MS,
+            `Enriquecimento ${proc.numeroProcesso}`
+          ).catch(error => {
+            logger.warn(`Falha ao processar processo ${proc.numeroProcesso}: ${error}`);
+            return null;
+          })
         )
       );
       for (const r of results) {
         if (r.status === 'fulfilled' && r.value) {
-          numerosProcessos.push(r.value);
+          enriquecidosComSucesso.push(r.value);
         }
       }
-      logger.info(`[Cache OAB] Processados ${Math.min(i + MAX_PARALLEL_FETCHES, processos.length)}/${processos.length} processos`);
+      logger.info(`[Cache OAB] Enriquecidos ${Math.min(i + MAX_PARALLEL_FETCHES, processosParaEnriquecer.length)}/${processosParaEnriquecer.length} processos`);
     }
+
+    if (processosRestantes.length > 0) {
+      logger.info(`[Cache OAB] ${processosRestantes.length} processos restantes - serão enriquecidos sob demanda`);
+    }
+
+    // Usa apenas os processos que foram realmente enriquecidos (com dados completos)
+    const numerosEnriquecidos = [...new Set(enriquecidosComSucesso)];
+    const processosDoBanco = numerosEnriquecidos.length > 0
+      ? await Processo.findAll({ where: { numeroProcesso: numerosEnriquecidos } })
+      : [];
 
     // Salva nos dois níveis de cache
     const ttlMs = CACHE_TTL_MINUTES * 60 * 1000;
@@ -362,12 +401,8 @@ class TribunalService {
       expiraEm,
     });
 
-    const processosDoBanco = await Processo.findAll({
-      where: { numeroProcesso: numerosProcessos },
-    });
-
     const tempoMs = Date.now() - inicio;
-    logger.info(`[Cache OAB] Busca completada para ${oabNormalizada}: ${numerosProcessos.length} processos em ${tempoMs}ms (L1 + L2 populados)`);
+    logger.info(`[Cache OAB] Busca completada para ${oabNormalizada}: ${numerosProcessos.length} processos (${numerosEnriquecidos.length} enriquecidos) em ${tempoMs}ms`);
 
     return { processos: processosDoBanco, doCache: false, tempoMs };
   }
