@@ -1,6 +1,6 @@
 [build]
-  builder = "DOCKER"
+  builder = "DOCKERFILE"
   dockerfilePath = "Dockerfile"
 
-[start]
-  command = "node dist/server.js"
+[deploy]
+  startCommand = "node dist/server.js"
