@@ -1,0 +1,7 @@
+[build]
+  builder = "NIXPACKS"
+  buildCommand = "cd minha-api && npm install && npm run build"
+  outputDir = "minha-api/dist"
+
+[start]
+  command = "cd minha-api && node dist/server.js"

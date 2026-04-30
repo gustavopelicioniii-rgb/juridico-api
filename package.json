@@ -22,6 +22,9 @@
     "doc": "docs"
   },
   "scripts": {
+    "build": "cd minha-api && npm run build",
+    "start": "cd minha-api && npm run start",
+    "dev": "cd minha-api && npm run dev",
     "test": "echo \"Error: no test specified\" && exit 1",
     "prepare": "husky"
   },
