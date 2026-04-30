@@ -3,4 +3,4 @@
   dockerfilePath = "minha-api/Dockerfile"
 
 [deploy]
-  startCommand = "cd minha-api && node dist/server.js"
+  startCommand = "node dist/server.js"
