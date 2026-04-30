@@ -42,7 +42,7 @@
   "type": "commonjs",
   "dependencies": {
     "@ngrok/ngrok": "^1.7.0",
-    "axios": "^1.14.0",
+    "axios": "^1.6.8",
     "bcryptjs": "^3.0.3",
     "bull": "^4.12.0",
     "cheerio": "^1.0.0",
