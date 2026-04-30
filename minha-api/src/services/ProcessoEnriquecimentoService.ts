@@ -1,14 +1,12 @@
 /**
  * Servico de Enriquecimento de Processos
- * Usa TribunalService (adaptadores DataJud) para buscar e salvar processos.
+ * Orquestra busca OAB via adaptadores e salvamento via TribunalService.
  */
 
 import { Op } from 'sequelize';
 import { registry } from '../tribunais';
 import TribunalService from './TribunalService';
 import Processo from '../models/Processo';
-import Parte from '../models/Parte';
-import Movimentacao from '../models/Movimentacao';
 import logger from '../config/logger';
 
 interface ProcessoEnriquecido {
@@ -34,10 +32,10 @@ function derivarTribunaisPorOAB(oab: string): string[] {
     PE: ['TJPE'], PA: ['TJPA'], MA: ['TJMA'], GO: ['TJGO'],
     '2': ['TRT2'], '3': ['TRT3'], '4': ['TRT4'], '6': ['TRT6'],
     '8': ['TRT8'], '9': ['TRT9'], '10': ['TRT10'], '11': ['TRT11'],
-    '12': ['TRT12'], '13': ['TRT13'], '14': ['TRT14'], '15': ['TRT15'],
-    '16': ['TRT16'], '17': ['TRT17'], '18': ['TRT18'], '19': ['TRT19'],
-    '20': ['TRT20'], '21': ['TRT21'], '22': ['TRT22'], '23': ['TRT23'],
-    '24': ['TRT24'], '1': ['TRT1'],
+    '12': ['TRT12'], '13': ['TRT13'], '14': ['TJ14'], '15': ['TJ15'],
+    '16': ['TJ16'], '17': ['TJ17'], '18': ['TJ18'], '19': ['TJ19'],
+    '20': ['TJ20'], '21': ['TJ21'], '22': ['TJ22'], '23': ['TJ23'],
+    '24': ['TJ24'], '1': ['TRT1'],
   };
   return ufMap[uf] || ['TJSP', 'TJMG', 'STJ', 'STF'];
 }
@@ -50,7 +48,7 @@ async function buscarPorOABEnriquecido(
   const oabFormatada = oab.toUpperCase().replace(/\s/g, '');
   const tribunais = derivarTribunaisPorOAB(oabFormatada);
 
-  logger.info(`[Enriquecimento] Busca OAB ${oabFormatada} em ${tribunais.length} tribunais`);
+  logger.info('[Enriquecimento] Busca OAB ' + oabFormatada + ' em ' + tribunais.length + ' tribunais');
 
   const numerosProcessos: string[] = [];
   const seenNumbers = new Set<string>();
@@ -68,7 +66,7 @@ async function buscarPorOABEnriquecido(
         }
       }
     } catch (error) {
-      logger.warn(`[Enriquecimento] Erro em ${tribunalCodigo}`);
+      logger.warn('[Enriquecimento] Erro ao buscar lista em ' + tribunalCodigo);
     }
   }
 
@@ -87,6 +85,7 @@ async function buscarPorOABEnriquecido(
   const numerosAtualizar = numerosProcessos.filter(n => numerosExistentes.has(n));
 
   const processosEnriquecidos: ProcessoEnriquecido[] = [];
+
   for (const numero of numerosProcessos) {
     for (const tribunalCodigo of tribunais) {
       const adapter = registry.get(tribunalCodigo);
@@ -98,14 +97,18 @@ async function buscarPorOABEnriquecido(
             numeroProcesso: numero,
             tribunalCodigo,
             dados: dados as unknown as Record<string, unknown>,
-            fonte: 'datajud',
-            enriquecido: false,
+            fonte: 'datajud' as const,
+            enriquecido: true,
           });
           break;
         }
-      } catch { /* continua */ }
+      } catch (error) {
+        logger.warn('[Enriquecimento] Erro ao enriquecer ' + numero + ' em ' + tribunalCodigo);
+      }
     }
   }
+
+  logger.info('[Enriquecimento] OAB ' + oabFormatada + ': ' + processosEnriquecidos.length + ' processos enriquecidos (' + numerosNovos.length + ' novos, ' + numerosAtualizar.length + ' existentes)');
 
   return {
     processos: processosEnriquecidos,
@@ -116,7 +119,8 @@ async function buscarPorOABEnriquecido(
 }
 
 async function salvarLoteProcessos(
-  processos: ProcessoEnriquecido[]
+  processos: ProcessoEnriquecido[],
+  advogadoId?: string
 ): Promise<{ salvos: number; erros: number }> {
   let salvos = 0;
   let erros = 0;
@@ -125,11 +129,12 @@ async function salvarLoteProcessos(
     try {
       await TribunalService.buscarESalvarProcesso(
         processo.numeroProcesso,
-        processo.tribunalCodigo
+        processo.tribunalCodigo,
+        advogadoId
       );
       salvos++;
     } catch (error) {
-      logger.error(`[Enriquecimento] Erro ao salvar ${processo.numeroProcesso}`);
+      logger.error('[Enriquecimento] Erro ao salvar ' + processo.numeroProcesso);
       erros++;
     }
   }
@@ -137,5 +142,22 @@ async function salvarLoteProcessos(
   return { salvos, erros };
 }
 
-export { buscarPorOABEnriquecido, salvarLoteProcessos };
+async function salvarProcessoEnriquecido(
+  processo: ProcessoEnriquecido,
+  advogadoId?: string
+): Promise<{ sucesso: boolean; erro?: string }> {
+  try {
+    await TribunalService.buscarESalvarProcesso(
+      processo.numeroProcesso,
+      processo.tribunalCodigo,
+      advogadoId
+    );
+    return { sucesso: true };
+  } catch (error: any) {
+    logger.error('[Enriquecimento] Erro ao salvar ' + processo.numeroProcesso);
+    return { sucesso: false, erro: error.message };
+  }
+}
+
+export { buscarPorOABEnriquecido, salvarLoteProcessos, salvarProcessoEnriquecido };
 export type { ProcessoEnriquecido, ResultadoOAB };

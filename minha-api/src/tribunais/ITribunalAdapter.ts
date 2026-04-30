@@ -138,8 +138,8 @@ export abstract class BaseTribunalAdapter implements ITribunalAdapter {
     // Remove UF e espaços
     const parts = oab.trim().split(/\s+/);
     const numero = parts[0].replace(/\D/g, '');
-    // Preenche com zeros à esquerda até 7 dígitos
-    return numero.padStart(7, '0');
+    // Retorna o número sem padding de zeros
+    return numero;
   }
 
   /**

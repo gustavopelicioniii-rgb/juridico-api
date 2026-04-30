@@ -14,6 +14,7 @@
     "declarationMap": true,
     "sourceMap": true,
     "moduleResolution": "node",
+    "downlevelIteration": true,
     "allowSyntheticDefaultImports": true,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,

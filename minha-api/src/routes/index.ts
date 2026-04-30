@@ -572,47 +572,42 @@ router.post('/tribunais/:codigo/buscar', async (req: Request, res: Response) => 
 router.post('/tribunais/:codigo/buscar-oab', async (req: Request, res: Response) => {
   try {
     const { codigo } = req.params;
-    const { oab, nome, advogadoId } = req.body;
-    
+    const { oab, nome, advogadoId, forceRefresh } = req.body;
+
     if (!oab) {
       return res.status(400).json({
         erro: { codigo: 'VALIDATION_ERROR', mensagem: 'OAB é obrigatória.' }
       });
     }
-    
-    // Busca apenas no tribunal especificado
+
+    // Valida tribunal
     const { registry } = await import('../tribunais');
     const adapter = registry.get(codigo.toUpperCase());
-    
+
     if (!adapter) {
       return res.status(400).json({
         erro: { codigo: 'TRIBUNAL_NOT_SUPPORTED', mensagem: `Tribunal não suportado: ${codigo}` }
       });
     }
-    
-    const resultado = await adapter.buscarPorOAB(oab, nome);
-    
-    // Salva os processos encontrados
-    const processosSalvos = [];
-    for (const proc of resultado.processos) {
-      try {
-        const r = await TribunalService.buscarESalvarProcesso(
-          proc.numeroProcesso,
-          codigo.toUpperCase(),
-          advogadoId
-        );
-        processosSalvos.push(r.processo);
-      } catch (e) {
-        // Continua mesmo se falhar um processo
-      }
-    }
-    
+
+    // Usa cache - busca no tribunal apenas se necessario
+    const resultado = await TribunalService.buscarPorOABComCache(
+      oab,
+      codigo.toUpperCase(),
+      nome,
+      advogadoId,
+      forceRefresh === true
+    );
+
     res.json({
       sucesso: true,
-      totalEncontrados: resultado.total,
-      processos: processosSalvos,
+      totalEncontrados: resultado.processos.length,
+      processos: resultado.processos,
+      doCache: resultado.doCache,
+      tempoMs: resultado.tempoMs,
     });
   } catch (error: any) {
+    logger.error(`Erro ao buscar OAB: ${error.message}`);
     res.status(500).json({ erro: { codigo: 'SCRAPE_ERROR', mensagem: 'Erro ao buscar por OAB.' } });
   }
 });

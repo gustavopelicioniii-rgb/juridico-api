@@ -82,6 +82,7 @@ interface DataJudHit {
   _source: DataJudProcesso;
   _id?: string;
   _score?: number;
+  sort?: string[];
 }
 
 interface DataJudResponse {
@@ -178,26 +179,19 @@ export class DataJudAdapter extends BaseTribunalAdapter {
     logger.info(`DataJudAdapter[${this.codigo}] buscando por OAB: ${oabNumero} (original: ${oab})`);
 
     try {
-      // Estratégia: buscar via wildcard no número do processo (a OAB pode estar
-      // embutida no NUP em alguns tribunais) E via campo advogado quando disponível.
-      //first attempt: wildcard on numeroProcesso (NUP format)
+      // Busca via wildcard no número do processo (a OAB está embutida no NUP)
+      // Usa size: 500 para capturar todos os processos
+      // IMPORTANTE: não usa formatação com zeros, usa o número direto
       const response = await this.client!.post<DataJudResponse>('/_search', {
         query: {
-          bool: {
-            should: [
-              // OAB embedded in process number (NUP format)
-              { wildcard: { numeroProcesso: `*${oabNumero}*` } },
-              // OAB in advogado field (when available in index)
-              { match: { 'polo.advogados.numeroOAB': oabNumero } },
-            ],
-          },
+          wildcard: { numeroProcesso: `*${oabNumero}*` }
         },
-        size: 100,
+        size: 500,
         sort: [{ dataAjuizamento: { order: 'desc' } }],
       });
 
       const hits = response.data.hits?.hits || [];
-      const total = response.data.hits?.total?.value || 0;
+      const total = hits.length;
 
       logger.info(`DataJudAdapter[${this.codigo}] OAB ${oabNumero}: ${total} processos encontrados`);
 

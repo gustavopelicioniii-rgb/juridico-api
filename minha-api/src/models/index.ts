@@ -8,6 +8,7 @@ import Job from './Job';
 import Monitoramento from './Monitoramento';
 import Notification from './Notification';
 import OABMonitorada from './OABMonitorada';
+import OABBuscaCache from './OABBuscaCache';
 
 Advogado.hasMany(Notification, { foreignKey: 'advogadoId', as: 'notifications' });
 Notification.belongsTo(Advogado, { foreignKey: 'advogadoId', as: 'advogado' });
@@ -45,6 +46,7 @@ export {
   Monitoramento,
   Notification,
   OABMonitorada,
+  OABBuscaCache,
 };
 
 export default {
@@ -57,4 +59,5 @@ export default {
   Monitoramento,
   Notification,
   OABMonitorada,
+  OABBuscaCache,
 };

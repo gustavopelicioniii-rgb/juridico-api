@@ -6,7 +6,6 @@ import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { z } from 'zod';
 import compression from 'compression';
-import etag from 'etag';
 
 import logger from './config/logger';
 import { connectDatabase, sequelize } from './config/database';
@@ -18,6 +17,8 @@ import Tribunal from './models/Tribunal';
 import Advogado from './models/Advogado';
 import bcrypt from 'bcryptjs';
 import MonitoringService from './services/MonitoringService';
+import ngrokService from './services/NgrokService';
+import oabCacheService from './services/OABCacheService';
 
 dotenv.config();
 
@@ -118,9 +119,13 @@ app.get('/api/v1/health', async (_req: Request, res: Response) => {
       timestamp: new Date().toISOString(),
       checks: {
         database: 'ok',
-        redis: 'ok', // redis status check via ping would require async call
+        redis: redis.isAvailable() ? 'ok' : 'fallback',
         websocket: notificationService.getConnectedClientsCount() >= 0 ? 'ok' : 'degraded',
+        ngrok: ngrokService.isActive() ? 'ok' : 'inativo',
+        oabCache: oabCacheService.getStats().tamanho >= 0 ? 'ok' : 'erro',
       },
+      ngrokUrl: ngrokService.getUrl(),
+      oabCacheStats: oabCacheService.getStats(),
     });
   } catch (error) {
     res.status(503).json({
@@ -139,6 +144,50 @@ app.get('/api/v1/health/crawlers', async (_req: Request, res: Response) => {
 
 app.get('/api/v1/metrics/crawlers', async (_req: Request, res: Response) => {
   res.json({ metricas: {} });
+});
+
+// ==================== NGROK TUNNEL ====================
+
+app.get('/api/v1/ngrok/status', async (_req: Request, res: Response) => {
+  res.json({
+    ativo: ngrokService.isActive(),
+    url: ngrokService.getUrl(),
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.post('/api/v1/ngrok/start', async (_req: Request, res: Response) => {
+  try {
+    const port = parseInt(_req.query.port as string) || 3000;
+    const url = await ngrokService.start(port);
+    if (url) {
+      res.json({ sucesso: true, url });
+    } else {
+      res.status(503).json({ erro: { codigo: 'NGROK_ERROR', mensagem: 'Falha ao iniciar tunel ngrok. Verifique NGROK_AUTHTOKEN.' } });
+    }
+  } catch (error: any) {
+    res.status(503).json({ erro: { codigo: 'NGROK_ERROR', mensagem: error.message } });
+  }
+});
+
+app.post('/api/v1/ngrok/stop', async (_req: Request, res: Response) => {
+  await ngrokService.stop();
+  res.json({ sucesso: true, mensagem: 'Tunel ngrok encerrado.' });
+});
+
+// ==================== OAB CACHE ====================
+
+app.get('/api/v1/oab-cache/stats', async (_req: Request, res: Response) => {
+  res.json(oabCacheService.getStats());
+});
+
+app.post('/api/v1/oab-cache/clear', async (_req: Request, res: Response) => {
+  oabCacheService.clear();
+  res.json({ sucesso: true, mensagem: 'Cache OAB limpo.' });
+});
+
+app.get('/api/v1/oab-cache/entries', async (_req: Request, res: Response) => {
+  res.json({ entradas: oabCacheService.getAll() });
 });
 
 // API routes
@@ -189,6 +238,8 @@ const gracefulShutdown = async (signal: string) => {
 
   try {
     MonitoringService.stop();
+
+    await ngrokService.stop();
 
     await notificationService.shutdown();
 
@@ -252,10 +303,34 @@ const startServer = async () => {
       logger.info('MonitoringService disabled (ENABLE_MONITORING=false)');
     }
 
+    // Inicia tunel ngrok se configurado
+    const ngrokEnabled = process.env.NGROK_ENABLED === 'true';
+    if (ngrokEnabled) {
+      const portNgrok = parseInt(process.env.NGROK_PORT || String(PORT), 10);
+      // Pequeno delay para garantir que o servidor já está ouvindo
+      setTimeout(async () => {
+        const url = await ngrokService.start(portNgrok);
+        if (url) {
+          logger.info(`Ngrok tunnel started: ${url}`);
+        }
+      }, 2000);
+    }
+
+    // Cleanup periódico do cache OAB (a cada 5 minutos)
+    setInterval(() => {
+      const removidos = oabCacheService.cleanup();
+      if (removidos > 0) {
+        logger.info(`OABCacheService: ${removidos} entradas expiradas removidas`);
+      }
+    }, 5 * 60 * 1000);
+
     httpServer.listen(PORT, () => {
       logger.info(`🚀 Server running on port ${PORT}`);
       logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
       logger.info(`WebSocket notifications enabled`);
+      if (ngrokEnabled) {
+        logger.info(`Ngrok tunnel enabled (will start shortly)`);
+      }
     });
   } catch (error) {
     logger.error('Failed to start server:', error);
