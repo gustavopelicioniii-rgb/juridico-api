@@ -454,7 +454,7 @@ export class DataJudAdapter extends BaseTribunalAdapter {
     };
   }
 
-  private gerarMockResultadoOAB(oab: string): ResultadoBusca {
+  private gerarMockResultadoOAB(_oab: string): ResultadoBusca {
     return {
       processos: [
         {

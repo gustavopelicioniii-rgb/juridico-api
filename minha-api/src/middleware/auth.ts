@@ -25,8 +25,27 @@ declare global {
   }
 }
 
+const UNSAFE_JWT_SECRETS = new Set(['dev-secret-unsafe', 'dev-refresh-secret-unsafe']);
+
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-unsafe';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'dev-refresh-secret-unsafe';
+
+/**
+ * Falha o startup em produção se secrets JWT não estiverem configurados.
+ */
+export function validateAuthConfig(): void {
+  if (process.env.NODE_ENV !== 'production') {
+    return;
+  }
+
+  if (!process.env.JWT_SECRET || UNSAFE_JWT_SECRETS.has(process.env.JWT_SECRET)) {
+    throw new Error('FATAL: JWT_SECRET must be set to a strong value in production.');
+  }
+
+  if (!process.env.JWT_REFRESH_SECRET || UNSAFE_JWT_SECRETS.has(process.env.JWT_REFRESH_SECRET)) {
+    throw new Error('FATAL: JWT_REFRESH_SECRET must be set to a strong value in production.');
+  }
+}
 
 const ACCESS_EXPIRES_IN_SECONDS = 3600;   // 1 hour
 const REFRESH_EXPIRES_IN_SECONDS = 604800; // 7 days

@@ -5,5 +5,6 @@ export {
   generateToken, 
   verifyToken,
   generateRefreshToken,
+  validateAuthConfig,
   AuthPayload 
 } from './auth';

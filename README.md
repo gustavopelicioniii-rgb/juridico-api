@@ -1,14 +1,15 @@
 # Jurídico API - Sistema de Monitoramento de Processos
 
-Sistema completo para monitoramento de processos judiciais brasileiros, com API REST e dashboard administrativo em React.
+Sistema completo para monitoramento de processos judiciais brasileiros, com API REST protegida por JWT e dashboard administrativo em React.
 
 ## 📁 Estrutura do Projeto
 
 ```
 juridico-api/
 ├── minha-api/          # Backend API (Node.js + Express + TypeScript)
-├── dashboard/         # Frontend React + TypeScript + TailwindCSS
-├── plans/             # Documentação e planos de arquitetura
+├── dashboard/          # Frontend React + TypeScript + TailwindCSS
+├── docs/               # Auditorias, integrações e relatórios
+├── plans/              # Documentação e planos de arquitetura
 └── README.md
 ```
 
@@ -18,12 +19,13 @@ juridico-api/
 
 - Node.js 18+
 - npm ou yarn
-- SQLite (já incluso, arquivo local)
+- SQLite (dev) ou PostgreSQL (prod)
 
 ### Backend (API)
 
 ```bash
 cd minha-api
+cp .env.example .env
 npm install
 npm run dev
 ```
@@ -49,28 +51,49 @@ docker-compose up -d
 
 ## 🔐 Autenticação
 
-O sistema utiliza autenticação JWT com OAB (Ordem dos Advogados do Brasil).
+Todas as rotas da API (exceto `/api/v1/auth/*` e health checks) exigem **JWT Bearer token**.
 
-- **Login**: `POST /api/v1/auth/login` com `{ oab: "123456" }`
+- **Registro**: `POST /api/v1/auth/register` com `{ oab, nome, email, senha }`
+- **Login**: `POST /api/v1/auth/login` com `{ oab, senha }`
 - **Token**: Access token (1h) + Refresh token (7d)
+- **Refresh**: `POST /api/v1/auth/refresh` com `{ refreshToken }`
+- **Perfil**: `GET /api/v1/auth/me` (header `Authorization: Bearer <token>`)
+
+### Usuário admin inicial (opcional)
+
+Defina no `.env` do backend:
+
+```env
+ADMIN_OAB=SP123456
+ADMIN_PASSWORD=sua-senha-segura
+ADMIN_NOME=Administrador
+ADMIN_EMAIL=admin@exemplo.com
+```
+
+Ou execute `npm run seed` após configurar as variáveis.
+
+Em **produção**, `JWT_SECRET` e `JWT_REFRESH_SECRET` são **obrigatórios** — o servidor não inicia sem eles.
 
 ## 📊 Tribunais Suportados
 
+Por padrão, o sistema usa a **API pública DataJud (CNJ)** para ~91 tribunais. Com `DATAJUD_USE_LEGACY=true`, ativa scrapers específicos:
+
 | Código | Tribunal |
 |--------|---------|
-| tjsp | Tribunal de Justiça de São Paulo |
-| tjmg | Tribunal de Justiça de Minas Gerais |
-| trt1 | Tribunal Regional do Trabalho - 1ª Região |
-| trt2 | Tribunal Regional do Trabalho - 2ª Região |
-| trf1 | Tribunal Regional Federal - 1ª Região |
-| trf3 | Tribunal Regional Federal - 3ª Região |
-| stj | Superior Tribunal de Justiça |
-| stf | Supremo Tribunal Federal |
+| TJSP | Tribunal de Justiça de São Paulo |
+| TJMG | Tribunal de Justiça de Minas Gerais |
+| TRT1–TRT24 | Tribunais Regionais do Trabalho |
+| TRF1–TRF6 | Tribunais Regionais Federais |
+| STJ | Superior Tribunal de Justiça |
+| STF | Supremo Tribunal Federal |
 
 ## 🔌 Endpoints Principais
 
-### Autenticação
-- `POST /api/v1/auth/login` - Login com OAB
+> Requerem header `Authorization: Bearer <token>` exceto rotas de auth.
+
+### Autenticação (públicas)
+- `POST /api/v1/auth/login` - Login com OAB + senha
+- `POST /api/v1/auth/register` - Cadastro de advogado
 - `POST /api/v1/auth/refresh` - Renovar token
 - `GET /api/v1/auth/me` - Dados do usuário atual
 
@@ -78,7 +101,7 @@ O sistema utiliza autenticação JWT com OAB (Ordem dos Advogados do Brasil).
 - `GET /api/v1/advogados` - Listar advogados
 - `POST /api/v1/advogados` - Criar advogado
 - `PUT /api/v1/advogados/:id` - Atualizar advogado
-- `DELETE /api/v1/advogados/:id` - Deletar advogado
+- `DELETE /api/v1/advogados/:id` - Desativar advogado
 - `GET /api/v1/advogados/:id/processos` - Processos do advogado
 
 ### Processos
@@ -99,39 +122,32 @@ O sistema utiliza autenticação JWT com OAB (Ordem dos Advogados do Brasil).
 - `POST /api/v1/processos/:id/monitorar` - Ativar monitoramento
 - `DELETE /api/v1/processos/:id/monitorar` - Desativar monitoramento
 
-### Jobs
+### Jobs e Notificações
 - `GET /api/v1/jobs` - Listar jobs em execução
-- `GET /api/v1/jobs/:id` - Detalhes do job
-- `POST /api/v1/jobs/:id/retry` - Repetir job falho
-
-### Dashboard
+- `GET /api/v1/notifications` - Listar notificações
 - `GET /api/v1/dashboard/stats` - Estatísticas gerais
+
+### Health e Métricas (públicas)
+- `GET /health` - Liveness
+- `GET /api/v1/health` - Readiness (DB, Redis, WebSocket)
+- `GET /metrics` - Prometheus
 
 ## 🛠️ Tecnologias
 
 ### Backend
-- Node.js + Express
-- TypeScript
-- Sequelize ORM
-- SQLite
+- Node.js + Express + TypeScript
+- Sequelize ORM (SQLite / PostgreSQL)
 - Redis (com fallback em memória)
-- JWT (jsonwebtoken)
+- JWT + bcrypt
 - Bull Queue (background jobs)
-- WebSocket (notificações em tempo real)
+- Socket.IO (notificações em tempo real)
+- DataJud CNJ + adaptadores legados por tribunal
 
 ### Frontend
-- React 18
-- TypeScript
-- Vite
-- TailwindCSS
-- React Router
-- Axios
+- React 18 + Vite + TailwindCSS
+- React Router + TanStack Query
+- Axios (com refresh automático de token)
 - Socket.io Client
-
-## 📝 API Documentation
-
-Após iniciar a API, acesse:
-- Swagger UI: `http://localhost:3000/api/docs`
 
 ## 🧪 Testes
 
@@ -140,13 +156,12 @@ cd minha-api
 npm test              # Executar testes
 npm run test:watch   # Modo watch
 npm run test:coverage # Com coverage
+npm run validate     # lint + typecheck + test
 ```
 
 ## 🔄 CI/CD
 
 ### GitHub Actions
-
-O projeto utiliza GitHub Actions para CI/CD com os seguintes jobs:
 
 | Job | Descrição | Gatilho |
 |-----|-----------|---------|
@@ -159,70 +174,31 @@ O projeto utiliza GitHub Actions para CI/CD com os seguintes jobs:
 ### Validação Local
 
 ```bash
-# Validar tudo (lint + typecheck + test)
 cd minha-api
-npm run validate
-
-# Apenas lint e typecheck (CI mode)
-npm run validate:ci
+npm run validate      # lint + typecheck + test
+npm run validate:ci   # lint + typecheck
 ```
 
 ### Hooks (Husky)
 
-Antes de cada commit, os seguintes hooks são executados:
-
 1. **commitlint** - Valida formato da mensagem de commit
-2. **lint-staged** - ESLint + TypeScript nos arquivos staged
+2. **lint-staged** - ESLint nos arquivos staged
 
-### Mensagens de Commit
-
-Formato Conventional Commits:
-
-```
-<tipo>(<escopo>): <descrição>
-
-exemplos:
-feat(crawler): adicionar suporte a TJRS
-fix(auth): corrigir validação de JWT
-docs(readme): atualizar documentação
-refactor(ESAJCrawler): extrair método de CAPTCHA
-```
-
-Tipos válidos: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`
-
-## 🏗️ Desenvolvimento
-
-### Scripts Disponíveis
-
-```bash
-# Backend (minha-api)
-npm run dev           # Desenvolvimento com ts-node
-npm run build         # Build production
-npm run lint          # ESLint
-npm run lint:fix      # ESLint com auto-fix
-npm run typecheck     # TypeScript check
-npm run migrate       # Executar migrations
-npm run seed          # Popular banco de dados
-```
-
-### Estrutura de Diretórios
+## 🏗️ Estrutura do Backend
 
 ```
 minha-api/
 ├── src/
-│   ├── config/          # Configurações (DB, Redis, Logger)
-│   ├── middleware/       # Middlewares Express
-│   ├── models/           # Modelos Sequelize
-│   ├── routes/           # Rotas da API
-│   ├── services/         # Lógica de negócio
-│   ├── tribunais/        # Adaptadores de tribunais
+│   ├── config/          # DB, Redis, Logger, tribunais
+│   ├── middleware/      # Auth JWT, métricas
+│   ├── models/          # Modelos Sequelize
+│   ├── routes/          # Rotas da API
+│   ├── services/        # Lógica de negócio
+│   ├── tribunais/       # Adaptadores (DataJud + legados)
 │   ├── queues/          # Filas Bull
-│   ├── websocket/       # Socket.IO
-│   └── crawler/         # Crawlers ESAJ/PJe
-├── tests/
-│   ├── mocks/           # Mocks para testes
-│   └── unit/            # Testes unitários
-└── scripts/            # Scripts utilitários
+│   └── websocket/       # Socket.IO
+├── tests/unit/          # Testes unitários
+└── scripts/             # migrate, seed, utilitários
 ```
 
 ## 📄 Licença

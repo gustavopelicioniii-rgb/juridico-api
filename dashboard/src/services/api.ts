@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 
 /** Busca por OAB / refresh em tribunal pode ultrapassar 30s (DataJud + persistência). */
 const LONG_OPERATION_TIMEOUT_MS = 300_000;
@@ -7,6 +7,89 @@ const api = axios.create({
   baseURL: `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'}/api/v1`,
   timeout: 30000,
 });
+
+type RetryConfig = InternalAxiosRequestConfig & { _retry?: boolean };
+
+let isRefreshing = false;
+let refreshQueue: Array<(token: string | null) => void> = [];
+
+const processQueue = (token: string | null) => {
+  refreshQueue.forEach((cb) => cb(token));
+  refreshQueue = [];
+};
+
+const redirectToLogin = () => {
+  localStorage.removeItem('token');
+  localStorage.removeItem('refreshToken');
+  if (!window.location.pathname.startsWith('/login') && !window.location.pathname.startsWith('/register')) {
+    window.location.href = '/login';
+  }
+};
+
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+api.interceptors.response.use(
+  (response) => response,
+  async (error: AxiosError) => {
+    const originalRequest = error.config as RetryConfig | undefined;
+    const isAuthRoute = originalRequest?.url?.startsWith('/auth/');
+
+    if (
+      error.response?.status !== 401 ||
+      !originalRequest ||
+      originalRequest._retry ||
+      isAuthRoute
+    ) {
+      return Promise.reject(error);
+    }
+
+    const refreshToken = localStorage.getItem('refreshToken');
+    if (!refreshToken) {
+      redirectToLogin();
+      return Promise.reject(error);
+    }
+
+    if (isRefreshing) {
+      return new Promise((resolve, reject) => {
+        refreshQueue.push((token) => {
+          if (!token) {
+            reject(error);
+            return;
+          }
+          originalRequest.headers.Authorization = `Bearer ${token}`;
+          resolve(api(originalRequest));
+        });
+      });
+    }
+
+    originalRequest._retry = true;
+    isRefreshing = true;
+
+    try {
+      const { data } = await axios.post<{ accessToken: string; refreshToken: string }>(
+        `${api.defaults.baseURL}/auth/refresh`,
+        { refreshToken }
+      );
+      localStorage.setItem('token', data.accessToken);
+      localStorage.setItem('refreshToken', data.refreshToken);
+      processQueue(data.accessToken);
+      originalRequest.headers.Authorization = `Bearer ${data.accessToken}`;
+      return api(originalRequest);
+    } catch (refreshError) {
+      processQueue(null);
+      redirectToLogin();
+      return Promise.reject(refreshError);
+    } finally {
+      isRefreshing = false;
+    }
+  }
+);
 
 export const authService = {
   login: async (oab: string, senha: string) => {
@@ -50,6 +133,8 @@ export const authService = {
     const { data } = await api.get<{ id: string; oab: string; nome: string; email?: string; role: string }>('/auth/me');
     return data;
   },
+
+  isAuthenticated: () => Boolean(localStorage.getItem('token')),
 };
 
 export const advogadoService = {

@@ -12,7 +12,7 @@ import Job from '../models/Job';
 import Notification from '../models/Notification';
 import TribunalService from '../services/TribunalService';
 import { authRouter } from './auth';
-import { authMiddleware, requireRole } from '../middleware/auth';
+import { authMiddleware } from '../middleware/auth';
 import { cache, CACHE_TTL, CACHE_KEYS } from '../config/redis';
 import logger from '../config/logger';
 
@@ -47,7 +47,10 @@ const logRouteError = (req: Request, route: string, error: unknown) => {
 // Rotas de autenticação (públicas)
 router.use('/auth', authRouter);
 
-// ==================== ROTAS PÚBLICAS (sem auth) ====================
+// Todas as demais rotas exigem JWT
+router.use(authMiddleware);
+
+// ==================== ROTAS PROTEGIDAS ====================
 
 router.get('/dashboard/movimentacoes', async (req: Request, res: Response) => {
   try {

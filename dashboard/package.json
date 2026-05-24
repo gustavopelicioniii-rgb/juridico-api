@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
+    "typecheck": "tsc -b",
     "lint": "eslint src --ext .ts,.tsx --max-warnings=100 -c eslint.config.cjs",
     "lint:fix": "eslint src --ext .ts,.tsx --fix -c eslint.config.cjs"
   },

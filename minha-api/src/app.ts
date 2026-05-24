@@ -13,6 +13,7 @@ import { redis } from './config/redis';
 import { router } from './routes';
 import { notificationService } from './websocket';
 import { requestIdMiddleware, metricsMiddleware, register } from './middleware/metrics';
+import { authMiddleware, validateAuthConfig } from './middleware/auth';
 import Tribunal from './models/Tribunal';
 import Advogado from './models/Advogado';
 import bcrypt from 'bcryptjs';
@@ -147,9 +148,9 @@ app.get('/api/v1/metrics/crawlers', async (_req: Request, res: Response) => {
   res.json({ metricas: {} });
 });
 
-// ==================== NGROK TUNNEL ====================
+// ==================== NGROK TUNNEL (protegido) ====================
 
-app.get('/api/v1/ngrok/status', async (_req: Request, res: Response) => {
+app.get('/api/v1/ngrok/status', authMiddleware, async (_req: Request, res: Response) => {
   res.json({
     ativo: ngrokService.isActive(),
     url: ngrokService.getUrl(),
@@ -157,7 +158,7 @@ app.get('/api/v1/ngrok/status', async (_req: Request, res: Response) => {
   });
 });
 
-app.post('/api/v1/ngrok/start', async (_req: Request, res: Response) => {
+app.post('/api/v1/ngrok/start', authMiddleware, async (_req: Request, res: Response) => {
   try {
     const port = parseInt(_req.query.port as string) || 3000;
     const url = await ngrokService.start(port);
@@ -171,23 +172,23 @@ app.post('/api/v1/ngrok/start', async (_req: Request, res: Response) => {
   }
 });
 
-app.post('/api/v1/ngrok/stop', async (_req: Request, res: Response) => {
+app.post('/api/v1/ngrok/stop', authMiddleware, async (_req: Request, res: Response) => {
   await ngrokService.stop();
   res.json({ sucesso: true, mensagem: 'Tunel ngrok encerrado.' });
 });
 
-// ==================== OAB CACHE ====================
+// ==================== OAB CACHE (protegido) ====================
 
-app.get('/api/v1/oab-cache/stats', async (_req: Request, res: Response) => {
+app.get('/api/v1/oab-cache/stats', authMiddleware, async (_req: Request, res: Response) => {
   res.json(oabCacheService.getStats());
 });
 
-app.post('/api/v1/oab-cache/clear', async (_req: Request, res: Response) => {
+app.post('/api/v1/oab-cache/clear', authMiddleware, async (_req: Request, res: Response) => {
   oabCacheService.clear();
   res.json({ sucesso: true, mensagem: 'Cache OAB limpo.' });
 });
 
-app.get('/api/v1/oab-cache/entries', async (_req: Request, res: Response) => {
+app.get('/api/v1/oab-cache/entries', authMiddleware, async (_req: Request, res: Response) => {
   res.json({ entradas: oabCacheService.getAll() });
 });
 
@@ -279,17 +280,31 @@ const autoSeed = async () => {
   }
   logger.info('Seed: tribunais verificados');
 
-  const senhaHash = await bcrypt.hash('juridico123', 12);
+  const adminOab = process.env.ADMIN_OAB;
+  const adminPassword = process.env.ADMIN_PASSWORD;
+  if (!adminOab || !adminPassword) {
+    logger.info('Seed: admin ignorado (defina ADMIN_OAB e ADMIN_PASSWORD para criar usuário inicial)');
+    return;
+  }
+
+  const senhaHash = await bcrypt.hash(adminPassword, 12);
   await Advogado.findOrCreate({
-    where: { oab: 'SP123456' },
-    defaults: { oab: 'SP123456', nome: 'João Silva', email: 'joao.silva@exemplo.com', ativo: true, passwordHash: senhaHash },
+    where: { oab: adminOab },
+    defaults: {
+      oab: adminOab,
+      nome: process.env.ADMIN_NOME || 'Administrador',
+      email: process.env.ADMIN_EMAIL,
+      ativo: true,
+      passwordHash: senhaHash,
+    },
   });
-  logger.info('Seed: usuário admin verificado');
+  logger.info(`Seed: usuário admin verificado (${adminOab})`);
 };
 
 // Start server
 const startServer = async () => {
   try {
+    validateAuthConfig();
     await connectDatabase();
     await autoSeed();
 

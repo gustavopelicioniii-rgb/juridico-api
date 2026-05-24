@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Routes, Route, Link, useLocation } from 'react-router-dom';
+import { Routes, Route, Link, useLocation, Navigate } from 'react-router-dom';
 import {
   LayoutDashboard,
   FileText,
@@ -9,13 +9,24 @@ import {
   Search,
   ChevronRight,
   Scale,
+  LogOut,
 } from 'lucide-react';
+import { authService } from './services/api';
 import { socketService } from './services/socket';
 import type { Notification } from './types/api';
 import DashboardPage from './pages/DashboardPage';
 import ProcessosPage from './pages/ProcessosPage';
 import AdvogadosPage from './pages/AdvogadosPage';
 import NotificacoesPage from './pages/NotificacoesPage';
+import LoginPage from './pages/LoginPage';
+import RegisterPage from './pages/RegisterPage';
+
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  if (!authService.isAuthenticated()) {
+    return <Navigate to="/login" replace />;
+  }
+  return <>{children}</>;
+}
 
 function Sidebar() {
   const location = useLocation();
@@ -78,15 +89,23 @@ function TopBar() {
 
   useEffect(() => {
     socketService.connect();
-    socketService.on('notification', (notif) => {
+    const handler = (notif: unknown) => {
       setNotifications((prev) => [notif as Notification, ...prev]);
-    });
+    };
+    socketService.on('notification', handler);
     return () => {
-      socketService.off('notification', () => {});
+      socketService.off('notification', handler);
+      socketService.disconnect();
     };
   }, []);
 
   const unreadCount = notifications.filter((n) => !n.lida).length;
+
+  const handleLogout = () => {
+    socketService.disconnect();
+    authService.logout();
+    window.location.href = '/login';
+  };
 
   return (
     <header className="h-16 glass border-b border-brand-900/30 flex items-center justify-between px-6">
@@ -114,20 +133,32 @@ function TopBar() {
           />
         </div>
 
-        <button className="relative p-2 rounded-xl bg-dark-100/50 border border-brand-900/30 text-slate-400 hover:text-brand-400 hover:border-brand-500/30 transition-all">
+        <Link
+          to="/notificacoes"
+          className="relative p-2 rounded-xl bg-dark-100/50 border border-brand-900/30 text-slate-400 hover:text-brand-400 hover:border-brand-500/30 transition-all"
+        >
           <Bell className="w-5 h-5" />
           {unreadCount > 0 && (
             <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-xs text-white font-bold flex items-center justify-center notification-badge">
               {unreadCount}
             </span>
           )}
+        </Link>
+
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="p-2 rounded-xl bg-dark-100/50 border border-brand-900/30 text-slate-400 hover:text-red-400 hover:border-red-500/30 transition-all"
+          title="Sair"
+        >
+          <LogOut className="w-5 h-5" />
         </button>
       </div>
     </header>
   );
 }
 
-export default function App() {
+function AppLayout() {
   return (
     <div className="min-h-screen bg-dark-300">
       <div className="flex">
@@ -141,10 +172,28 @@ export default function App() {
               <Route path="/advogados" element={<AdvogadosPage />} />
               <Route path="/notificacoes" element={<NotificacoesPage />} />
               <Route path="/configuracoes" element={<div className="text-slate-400">Configurações em breve...</div>} />
+              <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </div>
         </main>
       </div>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/register" element={<RegisterPage />} />
+      <Route
+        path="/*"
+        element={
+          <ProtectedRoute>
+            <AppLayout />
+          </ProtectedRoute>
+        }
+      />
+    </Routes>
   );
 }

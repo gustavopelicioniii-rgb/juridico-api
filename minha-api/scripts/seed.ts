@@ -57,18 +57,26 @@ const seedTribunais = async (): Promise<void> => {
 };
 
 const seedSampleAdvogado = async (): Promise<void> => {
-  const senhaHash = await bcrypt.hash('juridico123', 12);
+  const oab = process.env.ADMIN_OAB;
+  const password = process.env.ADMIN_PASSWORD;
+
+  if (!oab || !password) {
+    console.log('⏭️  Admin seed skipped (set ADMIN_OAB and ADMIN_PASSWORD to create)');
+    return;
+  }
+
+  const senhaHash = await bcrypt.hash(password, 12);
   const [advogado, created] = await Advogado.findOrCreate({
-    where: { oab: 'SP123456' },
+    where: { oab },
     defaults: {
-      oab: 'SP123456',
-      nome: 'João Silva',
-      email: 'joao.silva@exemplo.com',
+      oab,
+      nome: process.env.ADMIN_NOME || 'Administrador',
+      email: process.env.ADMIN_EMAIL,
       ativo: true,
       passwordHash: senhaHash,
     },
   });
-  console.log(`${created ? '✅ Created' : '📝 Found'}: Advogado ${advogado.nome}`);
+  console.log(`${created ? '✅ Created' : '📝 Found'}: Advogado ${advogado.nome} (${advogado.oab})`);
 };
 
 const main = async (): Promise<void> => {

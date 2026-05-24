@@ -9,7 +9,7 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const token = localStorage.getItem('token');
+  const token = authService.isAuthenticated();
   if (token) {
     return <Navigate to="/" replace />;
   }

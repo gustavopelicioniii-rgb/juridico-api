@@ -12,7 +12,6 @@ import Monitoramento from '../models/Monitoramento';
 import Processo from '../models/Processo';
 import JobModel from '../models/Job';
 // TribunalDerivacaoService removed - stub functions
-const getTribunaisParaBusca = (_oab: string): string[] => [];
 const derivarTribunaisPorOAB = (_oab: string): string[] => [];
 
 // Configuração da fila
