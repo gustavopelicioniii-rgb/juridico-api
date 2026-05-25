@@ -156,6 +156,24 @@ VITE_API_BASE_URL=https://api.seudominio.com.br
 - [ ] `CORS_ORIGIN` no `.env` inclui a URL do Jurix
 - [ ] Importação por OAB no app retorna processos
 
+## Postgres `unhealthy` no deploy (painel Hostinger)
+
+Se o log mostrar `container juridico-postgres is unhealthy` logo após o primeiro deploy com erro de porta **5432**, o volume Docker pode ter ficado inconsistente.
+
+Via SSH na VPS (pasta do projeto, ex. `minha-api`):
+
+```bash
+docker logs juridico-postgres --tail 80
+docker compose down
+docker volume rm juridico-api_postgres_data
+docker compose up -d --build
+docker compose ps
+```
+
+`docker volume rm` apaga o banco do container — use só na primeira subida ou quando aceitar recriar os dados.
+
+Depois de puxar as últimas alterações do Git, o `healthcheck` do Postgres inclui `start_period: 40s` para VPS lentas.
+
 ## Recursos na VPS
 
 Recomendado para esta stack: **mínimo 2 GB RAM** (ideal 4 GB). Monitoramento:
