@@ -1,0 +1,10 @@
+node_modules
+dist
+data
+coverage
+logs
+*.log
+.env
+.env.*
+.git
+.husky

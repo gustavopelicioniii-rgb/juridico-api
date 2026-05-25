@@ -1,8 +1,9 @@
-FROM node:20-alpine AS builder
+FROM node:20-alpine
 
 WORKDIR /app
 
-ARG BUILD_DATE=2026-04-30
+ENV HUSKY=0
+
 COPY minha-api/package*.json ./
 RUN npm install
 
@@ -10,18 +11,10 @@ COPY minha-api/tsconfig.json ./
 COPY minha-api/src/ ./src/
 COPY minha-api/scripts/ ./scripts/
 
-RUN npm run build
+RUN npm run build && test -f dist/server.js
 
-FROM node:20-alpine
-
-WORKDIR /app
-
-ARG BUILD_DATE=2026-04-30
-COPY minha-api/package*.json ./
-# Produção usa PostgreSQL (DATABASE_URL); sqlite3 não é necessário no runtime.
-RUN npm install --omit=dev --ignore-scripts
-
-COPY --from=builder /app/dist ./dist
+# Produção usa PostgreSQL (DATABASE_URL); remove devDependencies após o build.
+RUN npm prune --omit=dev --ignore-scripts
 
 EXPOSE 3000
 
