@@ -31,7 +31,7 @@ Este guia descreve como integrar a `juridico-api` (scraping de processos) com o 
 
 ## 2. Pré-requisitos
 
-- [ ] `juridico-api` hospedada no Render (ou outro provedor)
+- [ ] `juridico-api` rodando (Docker local ou servidor próprio)
 - [ ] `sistema-advocacia-jurix` com Supabase configurado
 - [ ] Canal Realtime do Supabase criado (`processos_notifications`)
 - [ ] URL da juridico-api configurada
@@ -77,7 +77,7 @@ No arquivo `.env` do `sistema-advocacia-jurix`:
 
 ```env
 # URL da API de scraping
-VITE_JURIDICO_API_URL=https://sua-api.onrender.com
+VITE_JURIDICO_API_URL=http://localhost:3000
 
 # Supabase Realtime (opcional, se quiser separar)
 VITE_SUPABASE_REALTIME_URL=https://xyz.supabase.co
@@ -287,7 +287,7 @@ SUPABASE_SERVICE_ROLE_KEY=eyJhbGc...
 ### No `sistema-advocacia-jurix` (.env):
 
 ```env
-VITE_JURIDICO_API_URL=https://sua-juridico-api.onrender.com
+VITE_JURIDICO_API_URL=http://localhost:3000
 ```
 
 ### Na `juridico-api` (.env):
@@ -305,7 +305,7 @@ SUPABASE_SERVICE_ROLE_KEY=sua-service-role-key
 
 1. Faça uma requisição POST para iniciar scraping:
 ```bash
-curl -X POST https://sua-juridico-api.onrender.com/api/oab/monitorar \
+curl -X POST http://localhost:3000/api/v1/tribunais/TJSP/buscar-oab \
   -H "Content-Type: application/json" \
   -d '{"oab": "SP123456", "advogadoId": "uuid-do-advogado"}'
 ```

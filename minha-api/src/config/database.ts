@@ -58,8 +58,9 @@ const configMap: Record<string, DatabaseConfig> = {
 
 const dbConfig = configMap[env] || configMap.development;
 
-// Sempre usa DATABASE_URL se existir (production PostgreSQL do Render)
+// Usa DATABASE_URL quando definida (ex.: docker-compose: postgres://...@postgres:5432/juridico)
 const useUrl = !!process.env.DATABASE_URL;
+const useSsl = process.env.DATABASE_SSL === 'true';
 console.log(`[DB] useUrl=${useUrl}, NODE_ENV=${env}, DATABASE_URL=${useUrl ? 'SET' : 'NOT SET'}`);
 
 export const sequelize = useUrl
@@ -67,7 +68,7 @@ export const sequelize = useUrl
       logging: false,
       pool: dbConfig.pool,
       define: { timestamps: true, underscored: true },
-      dialectOptions: { ssl: { rejectUnauthorized: false } },
+      ...(useSsl ? { dialectOptions: { ssl: { rejectUnauthorized: false } } } : {}),
     })
   : new Sequelize({
       dialect: dbConfig.dialect,

@@ -123,6 +123,16 @@ TWOCAPTCHA_API_KEY=sua_chave_2captcha
 CORS_ORIGIN=http://localhost:3000
 ```
 
+### Docker (recomendado)
+
+```bash
+cd minha-api
+cp .env.docker.example .env
+docker compose up -d --build
+```
+
+Detalhes em [DEPLOY-DOCKER.md](./DEPLOY-DOCKER.md).
+
 ### Scripts
 
 ```bash
