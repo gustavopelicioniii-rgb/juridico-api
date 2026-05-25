@@ -20,7 +20,7 @@ services:
       - TWOCAPTCHA_API_KEY=${TWOCAPTCHA_API_KEY:-}
     depends_on:
       postgres:
-        condition: service_healthy
+        condition: service_started
       redis:
         condition: service_started
     restart: unless-stopped
@@ -30,27 +30,13 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: juridico-postgres
-    shm_size: 256mb
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=juridico
-    # Limites leves para VPS com pouca RAM (Hostinger 1–2 GB)
-    command:
-      - postgres
-      - -c
-      - shared_buffers=64MB
-      - -c
-      - max_connections=30
     volumes:
       - postgres_data:/var/lib/postgresql/data
     # Sem ports: evita conflito com PostgreSQL da VPS (5432). Acesso só via rede Docker.
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d juridico"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
-      start_period: 40s
     restart: unless-stopped
     networks:
       - juridico-network
@@ -84,7 +70,7 @@ services:
       - TWOCAPTCHA_API_KEY=${TWOCAPTCHA_API_KEY:-}
     depends_on:
       postgres:
-        condition: service_healthy
+        condition: service_started
       redis:
         condition: service_started
     restart: unless-stopped

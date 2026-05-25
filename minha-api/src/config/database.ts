@@ -83,18 +83,31 @@ export const sequelize = useUrl
       define: { timestamps: true, underscored: true },
     });
 
-export const connectDatabase = async (): Promise<void> => {
-  try {
-    await sequelize.authenticate();
-    console.log('✅ Database connection established successfully.');
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-    // Roda migrations pendentes
-    const { migrator } = await import('../migrations');
-    await migrator.up();
-    console.log('✅ Migrations applied.');
-  } catch (error) {
-    console.error('❌ Unable to connect to the database:', error);
-    throw error;
+export const connectDatabase = async (): Promise<void> => {
+  const maxAttempts = parseInt(process.env.DB_CONNECT_RETRIES || '30', 10);
+  const delayMs = parseInt(process.env.DB_CONNECT_DELAY_MS || '2000', 10);
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await sequelize.authenticate();
+      console.log('✅ Database connection established successfully.');
+
+      const { migrator } = await import('../migrations');
+      await migrator.up();
+      console.log('✅ Migrations applied.');
+      return;
+    } catch (error) {
+      if (attempt >= maxAttempts) {
+        console.error('❌ Unable to connect to the database:', error);
+        throw error;
+      }
+      console.warn(
+        `⏳ Database not ready (attempt ${attempt}/${maxAttempts}), retrying in ${delayMs}ms...`
+      );
+      await sleep(delayMs);
+    }
   }
 };
 
