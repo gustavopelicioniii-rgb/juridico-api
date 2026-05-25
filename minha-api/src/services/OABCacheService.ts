@@ -10,10 +10,21 @@
  * O banco é o segundo nível (L2) - persistente entre reinicializações.
  */
 
+export interface OABProcessoResumoCache {
+  numeroProcesso: string;
+  tribunalCodigo: string;
+  classe?: string;
+  assunto?: string;
+  dataAjuizamento?: string;
+  orgaoJulgador?: string;
+  valorCausa?: number;
+}
+
 export interface CacheEntry {
   oab: string;
   tribunalCodigo: string;
   processos: string[]; // Números de processo
+  resumo?: OABProcessoResumoCache[];
   totalProcessos: number;
   criadoEm: number; // timestamp ms
   expiraEm: number; // timestamp ms
@@ -72,7 +83,8 @@ class OABCacheService {
     tribunalCodigo: string,
     processos: string[],
     ttlMs: number = DEFAULT_TTL_MS,
-    nome?: string
+    nome?: string,
+    resumo?: OABProcessoResumoCache[]
   ): void {
     const key = this.buildKey(oab, tribunalCodigo);
     const now = Date.now();
@@ -81,6 +93,7 @@ class OABCacheService {
       oab: oab.toUpperCase().replace(/\s/g, ''),
       tribunalCodigo: tribunalCodigo.toUpperCase(),
       processos,
+      resumo,
       totalProcessos: processos.length,
       criadoEm: now,
       expiraEm: now + ttlMs,

@@ -1,1 +1,3 @@
+cd minha-api && npm run typecheck
+cd ..
 npx lint-staged

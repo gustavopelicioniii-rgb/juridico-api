@@ -14,6 +14,12 @@ import { sequelize } from '../config/database';
 import { Transaction, Op } from 'sequelize';
 import logger from '../config/logger';
 import oabCacheService from './OABCacheService';
+import {
+  extrairResumoCache,
+  montarProcessosParaApi,
+  type OABProcessoResumo,
+  type ProcessoApiResponse,
+} from '../utils/serializeProcessoApi';
 
 const CACHE_TTL_MINUTES = 30;
 const MAX_PARALLEL_FETCHES = 5; // Paralelo para produção
@@ -281,19 +287,23 @@ class TribunalService {
     nome?: string,
     advogadoId?: string,
     forceRefresh = false
-  ): Promise<{ processos: Processo[]; doCache: boolean; tempoMs: number }> {
+  ): Promise<{ processos: ProcessoApiResponse[]; doCache: boolean; tempoMs: number }> {
     const inicio = Date.now();
     const oabNormalizada = oab.toUpperCase().replace(/\s/g, '');
+    const carregarProcessos = (numeros: string[]) =>
+      Processo.findAll({ where: { numeroProcesso: numeros } });
 
     // ===== L1: Cache em memória (verifica primeiro - mais rápido) =====
     if (!forceRefresh) {
       const entryL1 = oabCacheService.get(oabNormalizada, tribunalCodigo);
       if (entryL1) {
         logger.info(`[Cache OAB] L1 HIT para ${oabNormalizada} em ${tribunalCodigo}`);
-        const numerosProcesso = entryL1.processos;
-        const processos = await Processo.findAll({
-          where: { numeroProcesso: numerosProcesso },
-        });
+        const processos = await montarProcessosParaApi(
+          entryL1.processos,
+          tribunalCodigo,
+          (entryL1.resumo as OABProcessoResumo[]) || [],
+          carregarProcessos
+        );
         const tempoMs = Date.now() - inicio;
         return { processos, doCache: true, tempoMs };
       }
@@ -312,13 +322,24 @@ class TribunalService {
       if (cacheEntryL2) {
         logger.info(`[Cache OAB] L2 HIT para ${oabNormalizada} em ${tribunalCodigo}`);
         const numerosProcesso = cacheEntryL2.resultadoJson.numerosProcessos as string[];
+        const resumo = extrairResumoCache(cacheEntryL2.resultadoJson);
 
         // Popula L1 com dado do L2 para próximas consultas serem instantâneas
-        oabCacheService.set(oabNormalizada, tribunalCodigo, numerosProcesso);
+        oabCacheService.set(
+          oabNormalizada,
+          tribunalCodigo,
+          numerosProcesso,
+          undefined,
+          nome,
+          resumo
+        );
 
-        const processos = await Processo.findAll({
-          where: { numeroProcesso: numerosProcesso },
-        });
+        const processos = await montarProcessosParaApi(
+          numerosProcesso,
+          tribunalCodigo,
+          resumo,
+          carregarProcessos
+        );
         const tempoMs = Date.now() - inicio;
         return { processos, doCache: true, tempoMs };
       }
@@ -334,11 +355,21 @@ class TribunalService {
 
     const resultado = await adapter.buscarPorOAB(oabNormalizada, nome);
     const numerosProcessos: string[] = [];
+    const resumoOab: OABProcessoResumo[] = [];
     const enriquecidosComSucesso: string[] = [];
 
     // Adiciona TODOS os números ao cache
     for (const proc of resultado.processos) {
       numerosProcessos.push(proc.numeroProcesso);
+      resumoOab.push({
+        numeroProcesso: proc.numeroProcesso,
+        tribunalCodigo: proc.tribunalCodigo || tribunalCodigo,
+        classe: proc.classe,
+        assunto: proc.assunto,
+        dataAjuizamento: proc.dataAjuizamento,
+        orgaoJulgador: proc.orgaoJulgador,
+        valorCausa: proc.valorCausa,
+      });
     }
 
     logger.info(`[Cache OAB] ${resultado.processos.length} processos encontrados. Enriquecendo todos...`);
@@ -367,17 +398,13 @@ class TribunalService {
       logger.info(`[Cache OAB] Enriquecidos ${Math.min(i + MAX_PARALLEL_FETCHES, resultado.processos.length)}/${resultado.processos.length} processos`);
     }
 
-    // Usa apenas os processos que foram realmente enriquecidos
-    const numerosEnriquecidos = [...new Set(enriquecidosComSucesso)];
-    const processosDoBanco = numerosEnriquecidos.length > 0
-      ? await Processo.findAll({ where: { numeroProcesso: numerosEnriquecidos } })
-      : [];
+    const numerosEnriquecidos = Array.from(new Set(enriquecidosComSucesso));
 
     // Salva nos dois níveis de cache
     const ttlMs = CACHE_TTL_MINUTES * 60 * 1000;
 
     // L1: Cache em memória
-    oabCacheService.set(oabNormalizada, tribunalCodigo, numerosProcessos, ttlMs, nome);
+    oabCacheService.set(oabNormalizada, tribunalCodigo, numerosProcessos, ttlMs, nome, resumoOab);
 
     // L2: Cache no banco
     const expiraEm = new Date();
@@ -386,15 +413,22 @@ class TribunalService {
     await OABBuscaCache.upsert({
       oab: oabNormalizada,
       tribunalCodigo,
-      resultadoJson: { numerosProcessos },
+      resultadoJson: { numerosProcessos, resumo: resumoOab },
       totalProcessos: numerosProcessos.length,
       expiraEm,
     });
 
+    const processos = await montarProcessosParaApi(
+      numerosProcessos,
+      tribunalCodigo,
+      resumoOab,
+      carregarProcessos
+    );
+
     const tempoMs = Date.now() - inicio;
     logger.info(`[Cache OAB] Busca completada para ${oabNormalizada}: ${numerosProcessos.length} processos (${numerosEnriquecidos.length} enriquecidos) em ${tempoMs}ms`);
 
-    return { processos: processosDoBanco, doCache: false, tempoMs };
+    return { processos, doCache: false, tempoMs };
   }
   
   /**
