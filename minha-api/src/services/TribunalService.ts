@@ -23,7 +23,7 @@ import {
 
 const CACHE_TTL_MINUTES = 30;
 const MAX_PARALLEL_FETCHES = 5; // Paralelo para produção
-const ENRICHMENT_TIMEOUT_MS = 15000; // Timeout por processo (15s)
+const ENRICHMENT_TIMEOUT_MS = 45000; // Crawlers públicos podem oscilar por processo
 
 /**
  * Executa função com timeout
@@ -35,6 +35,29 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, desc: string): P
       setTimeout(() => reject(new Error(`${desc} - timeout após ${timeoutMs}ms`)), timeoutMs)
     ),
   ]);
+}
+
+function validDate(value?: Date | null): Date | undefined {
+  if (!value || Number.isNaN(value.getTime())) return undefined;
+  return value;
+}
+
+function ultimaDataValida(movimentacoes: DadosProcesso['movimentacoes']): Date | undefined {
+  for (let i = movimentacoes.length - 1; i >= 0; i--) {
+    const data = validDate(movimentacoes[i].data);
+    if (data) return data;
+  }
+  return undefined;
+}
+
+function valorInteiro(value?: number): number | undefined {
+  if (value == null || !Number.isFinite(value)) return undefined;
+  return Math.round(value);
+}
+
+function limitarTexto(value: string | undefined, maxLength: number): string | undefined {
+  if (!value) return undefined;
+  return value.length > maxLength ? value.slice(0, maxLength) : value;
 }
 
 export interface ResultadoBuscaProcesso {
@@ -89,18 +112,15 @@ class TribunalService {
           assunto: dadosProcesso.assunto,
           assuntoPrincipal: dadosProcesso.assuntoPrincipal,
           instancia: dadosProcesso.instancia || 'PRIMEIRA',
-          primeiraInstancia: dadosProcesso.dataDistribuicao,
-          dataAjuizamento: dadosProcesso.dataAjuizamento,
-          valorCausa: dadosProcesso.valorCausa,
+          primeiraInstancia: validDate(dadosProcesso.dataDistribuicao),
+          dataAjuizamento: validDate(dadosProcesso.dataAjuizamento),
+          valorCausa: valorInteiro(dadosProcesso.valorCausa),
           orgaoJulgador: dadosProcesso.orgaoJulgador,
           orgaoJulgadorCodigo: dadosProcesso.orgaoJulgadorCodigo,
           nivelSigilo: dadosProcesso.nivelSigilo,
           sistema: dadosProcesso.sistema,
           formato: dadosProcesso.formato,
-          ultimaMovimentacao:
-            dadosProcesso.movimentacoes.length > 0
-              ? dadosProcesso.movimentacoes[dadosProcesso.movimentacoes.length - 1].data
-              : undefined,
+          ultimaMovimentacao: ultimaDataValida(dadosProcesso.movimentacoes),
           dadosOriginais: dadosProcesso.dadosOriginais,
           enriquecido: true,
         };
@@ -112,21 +132,23 @@ class TribunalService {
         logger.info(`Novo processo criado: ${processo.numeroProcesso}`);
       } else {
         processo = processoExistente;
+        const updateData: any = {
+          classe: dadosProcesso.classe || processo.classe,
+          assunto: dadosProcesso.assunto || processo.assunto,
+          assuntoPrincipal: dadosProcesso.assuntoPrincipal || processo.assuntoPrincipal,
+          ultimaMovimentacao:
+            ultimaDataValida(dadosProcesso.movimentacoes) || processo.ultimaMovimentacao,
+          valorCausa: valorInteiro(dadosProcesso.valorCausa) || processo.valorCausa,
+          orgaoJulgador: dadosProcesso.orgaoJulgador || processo.orgaoJulgador,
+          nivelSigilo: dadosProcesso.nivelSigilo ?? processo.nivelSigilo,
+          dadosOriginais: dadosProcesso.dadosOriginais,
+          enriquecido: true, // Marcado como enriquecido quando dados sao atualizados
+        };
+        if (advogadoId) {
+          updateData.advogadoId = advogadoId;
+        }
         await processo.update(
-          {
-            classe: dadosProcesso.classe || processo.classe,
-            assunto: dadosProcesso.assunto || processo.assunto,
-            assuntoPrincipal: dadosProcesso.assuntoPrincipal || processo.assuntoPrincipal,
-            ultimaMovimentacao:
-              dadosProcesso.movimentacoes.length > 0
-                ? dadosProcesso.movimentacoes[dadosProcesso.movimentacoes.length - 1].data
-                : processo.ultimaMovimentacao,
-            valorCausa: dadosProcesso.valorCausa || processo.valorCausa,
-            orgaoJulgador: dadosProcesso.orgaoJulgador || processo.orgaoJulgador,
-            nivelSigilo: dadosProcesso.nivelSigilo ?? processo.nivelSigilo,
-            dadosOriginais: dadosProcesso.dadosOriginais,
-            enriquecido: true, // Marcado como enriquecido quando dados sao atualizados
-          },
+          updateData,
           { transaction: t }
         );
 
@@ -162,13 +184,40 @@ class TribunalService {
   ): Promise<void> {
     await Parte.destroy({ where: { processoId }, transaction: t });
 
-    const partesData = partes.map(p => ({
-      processoId,
-      nome: p.nome,
-      tipo: p.tipo,
-      documento: p.documento,
-      isAdvogado: p.isAdvogado,
-    }));
+    const partesData: Array<{
+      processoId: string;
+      nome: string;
+      tipo: DadosProcesso['partes'][number]['tipo'];
+      documento?: string;
+      isAdvogado: boolean;
+    }> = [];
+    const advogadosIncluidos = new Set<string>();
+
+    for (const p of partes) {
+      partesData.push({
+        processoId,
+        nome: p.nome,
+        tipo: p.tipo,
+        documento: p.documento,
+        isAdvogado: p.isAdvogado,
+      });
+
+      for (const advogado of p.advogados ?? []) {
+        if (!advogado.nome) continue;
+        const key = `${advogado.nome}|${advogado.numeroOAB ?? ''}|${advogado.ufOAB ?? ''}`.toUpperCase();
+        if (advogadosIncluidos.has(key)) continue;
+        advogadosIncluidos.add(key);
+
+        const oabDocumento = [advogado.numeroOAB, advogado.ufOAB].filter(Boolean).join('/');
+        partesData.push({
+          processoId,
+          nome: advogado.nome,
+          tipo: 'ADVOGADO',
+          documento: oabDocumento || undefined,
+          isAdvogado: true,
+        });
+      }
+    }
 
     if (partesData.length > 0) {
       await Parte.bulkCreate(partesData, { transaction: t });
@@ -183,6 +232,7 @@ class TribunalService {
     movimentacoes: DadosProcesso['movimentacoes'],
     t: Transaction
   ): Promise<{ novas: number; total: number }> {
+    const movimentacoesValidas = movimentacoes.filter(m => validDate(m.data));
     const ultimaMovimentacao = await Movimentacao.findOne({
       where: { processoId },
       order: [['data', 'DESC']],
@@ -191,10 +241,10 @@ class TribunalService {
 
     const dataUltimaRegistrada = ultimaMovimentacao?.data || new Date(0);
 
-    const movimentacoesNovas = movimentacoes.filter(m => m.data > dataUltimaRegistrada);
+    const movimentacoesNovas = movimentacoesValidas.filter(m => m.data > dataUltimaRegistrada);
 
     if (movimentacoesNovas.length === 0) {
-      return { novas: 0, total: movimentacoes.length };
+      return { novas: 0, total: movimentacoesValidas.length };
     }
 
     // Apenas movimentações dos últimos 30 dias são marcadas como "nova"
@@ -218,7 +268,7 @@ class TribunalService {
       processoId,
       descricao: m.descricao,
       data: m.data,
-      origem: m.origem,
+      origem: limitarTexto(m.origem, 50),
       dadosOriginais: m.dadosOriginais,
       nova: m.data >= dataLimiteNova,
     }));
@@ -286,15 +336,24 @@ class TribunalService {
     tribunalCodigo: string,
     nome?: string,
     advogadoId?: string,
-    forceRefresh = false
+    forceRefresh = false,
+    limiteProcessos?: number
   ): Promise<{ processos: ProcessoApiResponse[]; doCache: boolean; tempoMs: number }> {
     const inicio = Date.now();
     const oabNormalizada = oab.toUpperCase().replace(/\s/g, '');
+    const buscaComFiltroNome = Boolean(nome?.trim());
+    const buscaLimitada = typeof limiteProcessos === 'number' && limiteProcessos > 0;
     const carregarProcessos = (numeros: string[]) =>
-      Processo.findAll({ where: { numeroProcesso: numeros } });
+      Processo.findAll({
+        where: { numeroProcesso: numeros },
+        include: [
+          { model: Parte, as: 'partes' },
+          { model: Movimentacao, as: 'movimentacoes' },
+        ],
+      });
 
     // ===== L1: Cache em memória (verifica primeiro - mais rápido) =====
-    if (!forceRefresh) {
+    if (!forceRefresh && !buscaComFiltroNome && !buscaLimitada) {
       const entryL1 = oabCacheService.get(oabNormalizada, tribunalCodigo);
       if (entryL1) {
         logger.info(`[Cache OAB] L1 HIT para ${oabNormalizada} em ${tribunalCodigo}`);
@@ -310,7 +369,7 @@ class TribunalService {
     }
 
     // ===== L2: Cache de banco (se L1 miss) =====
-    if (!forceRefresh) {
+    if (!forceRefresh && !buscaComFiltroNome && !buscaLimitada) {
       const cacheEntryL2 = await OABBuscaCache.findOne({
         where: {
           oab: oabNormalizada,
@@ -354,34 +413,46 @@ class TribunalService {
     }
 
     const resultado = await adapter.buscarPorOAB(oabNormalizada, nome);
+    const processosResultado = buscaLimitada
+      ? resultado.processos.slice(0, Math.max(1, Math.floor(limiteProcessos)))
+      : resultado.processos;
     const numerosProcessos: string[] = [];
     const resumoOab: OABProcessoResumo[] = [];
     const enriquecidosComSucesso: string[] = [];
 
     // Adiciona TODOS os números ao cache
-    for (const proc of resultado.processos) {
+    for (const proc of processosResultado) {
       numerosProcessos.push(proc.numeroProcesso);
       resumoOab.push({
         numeroProcesso: proc.numeroProcesso,
         tribunalCodigo: proc.tribunalCodigo || tribunalCodigo,
         classe: proc.classe,
+        classeCodigo: proc.classeCodigo,
         assunto: proc.assunto,
+        assuntoPrincipal: proc.assuntoPrincipal,
         dataAjuizamento: proc.dataAjuizamento,
         orgaoJulgador: proc.orgaoJulgador,
+        orgaoJulgadorCodigo: proc.orgaoJulgadorCodigo,
         valorCausa: proc.valorCausa,
+        instancia: proc.instancia,
+        formato: proc.formato,
+        sistema: proc.sistema,
+        partes: proc.partes,
+        advogados: proc.advogados,
+        movimentacoes: proc.movimentacoes,
       });
     }
 
-    logger.info(`[Cache OAB] ${resultado.processos.length} processos encontrados. Enriquecendo todos...`);
+    logger.info(`[Cache OAB] ${processosResultado.length} processos encontrados. Enriquecendo todos...`);
 
     // Busca e salva TODOS os processos em paralelo
-    for (let i = 0; i < resultado.processos.length; i += MAX_PARALLEL_FETCHES) {
-      const batch = resultado.processos.slice(i, i + MAX_PARALLEL_FETCHES);
+    for (let i = 0; i < processosResultado.length; i += MAX_PARALLEL_FETCHES) {
+      const batch = processosResultado.slice(i, i + MAX_PARALLEL_FETCHES);
       const results = await Promise.allSettled(
         batch.map(proc =>
           withTimeout(
             this.buscarESalvarProcesso(proc.numeroProcesso, tribunalCodigo, advogadoId)
-              .then(() => proc.numeroProcesso),
+              .then(resultado => resultado.processo.numeroProcesso),
             ENRICHMENT_TIMEOUT_MS,
             `Enriquecimento ${proc.numeroProcesso}`
           ).catch(error => {
@@ -395,7 +466,7 @@ class TribunalService {
           enriquecidosComSucesso.push(r.value);
         }
       }
-      logger.info(`[Cache OAB] Enriquecidos ${Math.min(i + MAX_PARALLEL_FETCHES, resultado.processos.length)}/${resultado.processos.length} processos`);
+      logger.info(`[Cache OAB] Enriquecidos ${Math.min(i + MAX_PARALLEL_FETCHES, processosResultado.length)}/${processosResultado.length} processos`);
     }
 
     const numerosEnriquecidos = Array.from(new Set(enriquecidosComSucesso));
@@ -403,23 +474,25 @@ class TribunalService {
     // Salva nos dois níveis de cache
     const ttlMs = CACHE_TTL_MINUTES * 60 * 1000;
 
-    // L1: Cache em memória
-    oabCacheService.set(oabNormalizada, tribunalCodigo, numerosProcessos, ttlMs, nome, resumoOab);
+    if (!buscaComFiltroNome && !buscaLimitada) {
+      // L1: Cache em memória
+      oabCacheService.set(oabNormalizada, tribunalCodigo, numerosEnriquecidos, ttlMs, nome, resumoOab);
 
-    // L2: Cache no banco
-    const expiraEm = new Date();
-    expiraEm.setMinutes(expiraEm.getMinutes() + CACHE_TTL_MINUTES);
+      // L2: Cache no banco
+      const expiraEm = new Date();
+      expiraEm.setMinutes(expiraEm.getMinutes() + CACHE_TTL_MINUTES);
 
-    await OABBuscaCache.upsert({
-      oab: oabNormalizada,
-      tribunalCodigo,
-      resultadoJson: { numerosProcessos, resumo: resumoOab },
-      totalProcessos: numerosProcessos.length,
-      expiraEm,
-    });
+      await OABBuscaCache.upsert({
+        oab: oabNormalizada,
+        tribunalCodigo,
+        resultadoJson: { numerosProcessos: numerosEnriquecidos, resumo: resumoOab },
+        totalProcessos: numerosEnriquecidos.length,
+        expiraEm,
+      });
+    }
 
     const processos = await montarProcessosParaApi(
-      numerosProcessos,
+      numerosEnriquecidos,
       tribunalCodigo,
       resumoOab,
       carregarProcessos

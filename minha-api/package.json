@@ -17,6 +17,7 @@
     "lint": "eslint src --ext .ts --max-warnings=100",
     "lint:fix": "eslint src --ext .ts --fix",
     "typecheck": "tsc --noEmit",
+    "validate:oab:national": "ts-node scripts/validate-national-oab.ts",
     "validate": "npm run lint && npm run typecheck && npm test",
     "validate:ci": "npm run lint && npm run typecheck",
     "prepare": "husky"

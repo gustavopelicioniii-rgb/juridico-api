@@ -21,11 +21,15 @@ import MonitoringService from './services/MonitoringService';
 import ProcessoMonitoramentoService from './services/ProcessoMonitoramentoService';
 import ngrokService from './services/NgrokService';
 import oabCacheService from './services/OABCacheService';
+import { listarTribunaisDataJud } from './config/datajudTribunais';
 
 dotenv.config();
 
 const app: Application = express();
 const PORT = process.env.PORT || 3000;
+
+// Necessário atrás de ngrok/proxies para rate-limit usar o IP correto.
+app.set('trust proxy', 1);
 
 // Criar servidor HTTP para integrar com Socket.IO
 const httpServer = createServer(app);
@@ -76,7 +80,7 @@ const authLimiter = rateLimit({
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: Number(process.env.API_RATE_LIMIT_MAX || 1000),
   message: {
     erro: { codigo: 'RATE_LIMIT_EXCEDIDO', mensagem: 'Muitas requisições. Tente novamente em alguns minutos.' },
   },
@@ -264,19 +268,11 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // Auto-seed: popula tribunais e usuário admin no primeiro startup
 const autoSeed = async () => {
-  const tribunais: Array<{
-    codigo: string; nome: string; baseUrl: string;
-    tipo: 'TJ' | 'STJ' | 'STF' | 'TRT' | 'TRF';
-    usaCaptcha: boolean; scraperConfig: Record<string, string>;
-  }> = [
-    { codigo: 'TJSP', nome: 'Tribunal de Justiça de São Paulo', baseUrl: 'https://api.tjsp.jus.br', tipo: 'TJ', usaCaptcha: false, scraperConfig: { endpoint: '/v2/processos' } },
-    { codigo: 'TJMG', nome: 'Tribunal de Justiça de Minas Gerais', baseUrl: 'https://www.tjmg.jus.br', tipo: 'TJ', usaCaptcha: true, scraperConfig: { portal: 'cpov' } },
-    { codigo: 'STJ', nome: 'Superior Tribunal de Justiça', baseUrl: 'https://www.stj.jus.br', tipo: 'STJ', usaCaptcha: false, scraperConfig: { caminho: '/consultas/processo' } },
-    { codigo: 'STF', nome: 'Supremo Tribunal Federal', baseUrl: 'https://portal.stf.jus.br', tipo: 'STF', usaCaptcha: false, scraperConfig: { caminho: '/processos' } },
-    { codigo: 'TST', nome: 'Tribunal Superior do Trabalho', baseUrl: 'https://www.tst.jus.br', tipo: 'TRT', usaCaptcha: false, scraperConfig: { caminho: '/consultas' } },
-  ];
-  for (const data of tribunais) {
-    await Tribunal.findOrCreate({ where: { codigo: data.codigo }, defaults: data });
+  for (const data of listarTribunaisDataJud()) {
+    const [tribunal, created] = await Tribunal.findOrCreate({ where: { codigo: data.codigo }, defaults: data });
+    if (!created) {
+      await tribunal.update(data);
+    }
   }
   logger.info('Seed: tribunais verificados');
 

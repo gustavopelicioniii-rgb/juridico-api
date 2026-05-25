@@ -32,6 +32,8 @@ coverage/
 tmp/
 temp/
 *.tmp
+validation-reports/
+**/validation-reports/
 
 # Database
 *.sqlite

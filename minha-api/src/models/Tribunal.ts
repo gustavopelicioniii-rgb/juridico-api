@@ -1,7 +1,7 @@
 import { DataTypes, Model, Optional } from 'sequelize';
 import { sequelize } from '../config/database';
 
-type TribunalTipo = 'TJ' | 'STJ' | 'STF' | 'TRT' | 'TRF';
+type TribunalTipo = 'TJ' | 'STJ' | 'STF' | 'TRT' | 'TRF' | 'TSE' | 'STM';
 
 interface TribunalAttributes {
   id: string;
@@ -61,7 +61,7 @@ Tribunal.init(
       },
     },
     tipo: {
-      type: DataTypes.ENUM('TJ', 'STJ', 'STF', 'TRT', 'TRF'),
+      type: DataTypes.ENUM('TJ', 'STJ', 'STF', 'TRT', 'TRF', 'TSE', 'STM'),
       allowNull: false,
     },
     usaCaptcha: {

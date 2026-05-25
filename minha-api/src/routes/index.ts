@@ -158,7 +158,7 @@ router.get('/advogados/:id', async (req: Request, res: Response) => {
 
 router.post('/advogados', async (req: Request, res: Response) => {
   try {
-    const { oab, nome, email } = req.body;
+    const { oab, nome, email, skipOnboarding } = req.body;
     
     if (!oab || !nome) {
       return res.status(400).json({ erro: { codigo: 'VALIDATION_ERROR', mensagem: 'OAB e nome são obrigatórios.' } });
@@ -171,22 +171,24 @@ router.post('/advogados', async (req: Request, res: Response) => {
     
     const advogado = await Advogado.create({ oab, nome, email });
 
-    // Onboarding é assíncrono e não deve bloquear a criação do advogado
-    import('../services/AdvogadoOnboardingService')
-      .then(({ default: AdvogadoOnboardingService }) => {
-        AdvogadoOnboardingService.start({
-          advogadoId: advogado.id,
-          oab: advogado.oab,
-          nome: advogado.nome,
-          source: 'admin-create',
-          requestedBy: 'admin',
-        }).catch((err) => {
-          console.error('Onboarding falhou:', err);
+    if (skipOnboarding !== true) {
+      // Onboarding é assíncrono e não deve bloquear a criação do advogado
+      import('../services/AdvogadoOnboardingService')
+        .then(({ default: AdvogadoOnboardingService }) => {
+          AdvogadoOnboardingService.start({
+            advogadoId: advogado.id,
+            oab: advogado.oab,
+            nome: advogado.nome,
+            source: 'admin-create',
+            requestedBy: 'admin',
+          }).catch((err) => {
+            console.error('Onboarding falhou:', err);
+          });
+        })
+        .catch((err) => {
+          console.error('Serviço de onboarding indisponível:', err);
         });
-      })
-      .catch((err) => {
-        console.error('Serviço de onboarding indisponível:', err);
-      });
+    }
 
     res.status(201).json({ advogado });
   } catch (error) {
@@ -575,7 +577,7 @@ router.post('/tribunais/:codigo/buscar', async (req: Request, res: Response) => 
 router.post('/tribunais/:codigo/buscar-oab', async (req: Request, res: Response) => {
   try {
     const { codigo } = req.params;
-    const { oab, nome, advogadoId, forceRefresh } = req.body;
+    const { oab, nome, advogadoId, forceRefresh, limiteProcessos } = req.body;
 
     if (!oab) {
       return res.status(400).json({
@@ -599,7 +601,8 @@ router.post('/tribunais/:codigo/buscar-oab', async (req: Request, res: Response)
       codigo.toUpperCase(),
       nome,
       advogadoId,
-      forceRefresh === true
+      forceRefresh === true,
+      typeof limiteProcessos === 'number' ? limiteProcessos : undefined
     );
 
     res.json({

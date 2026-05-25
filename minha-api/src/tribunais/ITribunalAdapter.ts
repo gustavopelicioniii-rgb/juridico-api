@@ -59,10 +59,19 @@ export interface ResultadoBusca {
     numeroProcesso: string;
     tribunalCodigo: string;
     classe?: string;
+    classeCodigo?: number;
     assunto?: string;
+    assuntoPrincipal?: string;
     dataAjuizamento?: string;
     orgaoJulgador?: string;
+    orgaoJulgadorCodigo?: number;
     valorCausa?: number;
+    instancia?: 'PRIMEIRA' | 'SEGUNDA' | 'SUPERIOR';
+    formato?: string;
+    sistema?: string;
+    partes?: DadosParte[];
+    advogados?: DadosAdvogado[];
+    movimentacoes?: DadosMovimentacao[];
   }>;
   total: number;
 }

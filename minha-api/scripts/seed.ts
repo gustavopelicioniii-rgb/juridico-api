@@ -2,57 +2,20 @@ import { sequelize } from '../src/models';
 import Tribunal from '../src/models/Tribunal';
 import Advogado from '../src/models/Advogado';
 import bcrypt from 'bcryptjs';
+import { listarTribunaisDataJud } from '../src/config/datajudTribunais';
 
 const seedTribunais = async (): Promise<void> => {
-  const tribunaisData = [
-    {
-      codigo: 'TJSP',
-      nome: 'Tribunal de Justiça de São Paulo',
-      baseUrl: 'https://api.tjsp.jus.br',
-      tipo: 'TJ' as const,
-      usaCaptcha: false,
-      scraperConfig: { endpoint: '/v2/processos' },
-    },
-    {
-      codigo: 'TJMG',
-      nome: 'Tribunal de Justiça de Minas Gerais',
-      baseUrl: 'https://www.tjmg.jus.br',
-      tipo: 'TJ' as const,
-      usaCaptcha: true,
-      scraperConfig: { portal: 'cpov' },
-    },
-    {
-      codigo: 'STJ',
-      nome: 'Superior Tribunal de Justiça',
-      baseUrl: 'https://www.stj.jus.br',
-      tipo: 'STJ' as const,
-      usaCaptcha: false,
-      scraperConfig: { caminho: '/consultas/processo' },
-    },
-    {
-      codigo: 'STF',
-      nome: 'Supremo Tribunal Federal',
-      baseUrl: 'https://portal.stf.jus.br',
-      tipo: 'STF' as const,
-      usaCaptcha: false,
-      scraperConfig: { caminho: '/processos' },
-    },
-    {
-      codigo: 'TST',
-      nome: 'Tribunal Superior do Trabalho',
-      baseUrl: 'https://www.tst.jus.br',
-      tipo: 'TRT' as const,
-      usaCaptcha: false,
-      scraperConfig: { caminho: '/consultas' },
-    },
-  ];
+  const tribunaisData = listarTribunaisDataJud();
 
   for (const data of tribunaisData) {
     const [tribunal, created] = await Tribunal.findOrCreate({
       where: { codigo: data.codigo },
       defaults: data,
     });
-    console.log(`${created ? '✅ Created' : '📝 Found'}: ${tribunal.nome}`);
+    if (!created) {
+      await tribunal.update(data);
+    }
+    console.log(`${created ? '✅ Created' : '📝 Updated'}: ${tribunal.nome}`);
   }
 };
 

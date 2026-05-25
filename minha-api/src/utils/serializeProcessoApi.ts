@@ -19,19 +19,70 @@ export interface ProcessoApiResponse {
   sistema?: string | null;
   enriquecido?: boolean;
   tribunal?: { codigo: string; nome?: string } | null;
+  partes?: Array<{
+    nome: string;
+    tipo?: string;
+    documento?: string | null;
+    isAdvogado?: boolean;
+  }>;
+  advogados?: Array<{
+    nome: string;
+    numeroOAB?: string;
+    ufOAB?: string;
+    tipo?: string;
+  }>;
+  movimentacoes?: Array<{
+    data: string;
+    descricao: string;
+    origem?: string;
+    codigoMovimento?: number;
+  }>;
 }
 
 function toIsoDate(value?: Date | string | null): string | undefined {
   if (value == null) return undefined;
-  if (value instanceof Date) return value.toISOString();
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? undefined : value.toISOString();
+  }
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toISOString();
 }
 
 export function serializeProcessoModel(
   processo: Processo,
-  tribunalCodigo: string
+  tribunalCodigo: string,
+  resumo?: OABProcessoResumo
 ): ProcessoApiResponse {
+  const partes = (processo.get('partes') as Array<{
+    nome: string;
+    tipo?: string;
+    documento?: string | null;
+    isAdvogado?: boolean;
+  }> | undefined) ?? [];
+  const movimentacoes = (processo.get('movimentacoes') as Array<{
+    data: Date | string;
+    descricao: string;
+    origem?: string;
+    codigoMovimento?: number;
+  }> | undefined) ?? [];
+  const resumoPartes = resumo?.partes ?? [];
+  const partesFinal = partes.length > 0 ? partes : resumoPartes;
+  const advogadosDasPartes = partesFinal
+    .filter((parte) => parte.isAdvogado === true || parte.tipo === 'ADVOGADO')
+    .map((parte) => {
+      const [numeroOAB, ufOAB] = String(parte.documento ?? '').split('/');
+      return {
+        nome: parte.nome,
+        numeroOAB: numeroOAB || undefined,
+        ufOAB: ufOAB || undefined,
+        tipo: 'ADVOGADO',
+      };
+    });
+  const advogadosFinal = advogadosDasPartes.length > 0 ? advogadosDasPartes : (resumo?.advogados ?? []);
+  const movimentacoesFinal = movimentacoes.length > 0
+    ? movimentacoes
+    : (resumo?.movimentacoes ?? []);
+
   return {
     id: processo.id,
     numeroProcesso: processo.numeroProcesso,
@@ -48,6 +99,21 @@ export function serializeProcessoModel(
     sistema: processo.sistema ?? null,
     enriquecido: processo.enriquecido ?? false,
     tribunal: { codigo: tribunalCodigo },
+    partes: partesFinal.map((parte) => ({
+      nome: parte.nome,
+      tipo: parte.tipo,
+      documento: parte.documento ?? null,
+      isAdvogado: parte.isAdvogado,
+    })),
+    advogados: advogadosFinal,
+    movimentacoes: movimentacoesFinal
+      .map((mov) => ({
+        data: toIsoDate(mov.data) ?? '',
+        descricao: mov.descricao,
+        origem: mov.origem,
+        codigoMovimento: mov.codigoMovimento,
+      }))
+      .filter((mov) => mov.data && mov.descricao),
   };
 }
 
@@ -67,6 +133,16 @@ export function serializeResumoOab(
     status: 'MONITORANDO',
     enriquecido: false,
     tribunal: { codigo },
+    partes: resumo.partes ?? [],
+    advogados: resumo.advogados ?? [],
+    movimentacoes: (resumo.movimentacoes ?? [])
+      .map((mov) => ({
+        data: toIsoDate(mov.data) ?? '',
+        descricao: mov.descricao,
+        origem: mov.origem,
+        codigoMovimento: mov.codigoMovimento,
+      }))
+      .filter((mov) => mov.data && mov.descricao),
   };
 }
 
@@ -93,13 +169,10 @@ export async function montarProcessosParaApi(
   const dbMap = new Map(dbRows.map(row => [row.numeroProcesso, row]));
   const resumoMap = new Map(resumo.map(item => [item.numeroProcesso, item]));
 
-  return numerosProcesso.map(numero => {
+  return numerosProcesso.flatMap(numero => {
     const db = dbMap.get(numero);
-    if (db) return serializeProcessoModel(db, tribunalCodigo);
     const item = resumoMap.get(numero);
-    return serializeResumoOab(
-      item ?? { numeroProcesso: numero, tribunalCodigo },
-      tribunalCodigo
-    );
+    if (db?.enriquecido === true) return serializeProcessoModel(db, tribunalCodigo, item);
+    return [];
   });
 }
