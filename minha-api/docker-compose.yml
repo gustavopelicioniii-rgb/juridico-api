@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      no_cache: true
     container_name: juridico-api
     ports:
       - "3000:3000"
@@ -57,6 +58,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      no_cache: true
     container_name: juridico-worker
     command: ["node", "dist/worker.js"]
     environment:
