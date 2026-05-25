@@ -28,13 +28,13 @@ services:
       - juridico-network
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:15-alpine
     container_name: juridico-postgres
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=juridico
-      - PGDATA=/var/lib/postgresql/data/pgdata
+      - PGDATA=/var/lib/postgresql/data/pgdata15
     volumes:
       - postgres_data:/var/lib/postgresql/data
     # Sem ports: evita conflito com PostgreSQL da VPS (5432). Acesso só via rede Docker.
