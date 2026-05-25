@@ -34,6 +34,7 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=juridico
+      - PGDATA=/var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data
     # Sem ports: evita conflito com PostgreSQL da VPS (5432). Acesso só via rede Docker.
