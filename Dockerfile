@@ -18,11 +18,8 @@ WORKDIR /app
 
 ARG BUILD_DATE=2026-04-30
 COPY minha-api/package*.json ./
+# Produção usa PostgreSQL (DATABASE_URL); sqlite3 não é necessário no runtime.
 RUN npm install --omit=dev --ignore-scripts
-
-COPY --from=builder /app/node_modules/sqlite3 ./node_modules/sqlite3
-COPY --from=builder /app/node_modules/bindings ./node_modules/bindings
-COPY --from=builder /app/node_modules/file-uri-to-path ./node_modules/file-uri-to-path
 
 COPY --from=builder /app/dist ./dist
 
