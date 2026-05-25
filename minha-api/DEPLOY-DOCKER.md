@@ -31,13 +31,19 @@ curl http://localhost:3000/api/v1/health
 
 ## Integração com Jurix (Supabase Edge)
 
-No Supabase → Edge Functions → Secrets:
+**Desenvolvimento local** — Supabase → Edge Functions → Secrets:
 
 ```env
 JURIDICO_API_URL=http://host.docker.internal:3000
 ```
 
-No Windows/Mac com Docker Desktop, `host.docker.internal` expõe a API do host para as Edge Functions locais. Em produção no Supabase cloud, use um túnel (ngrok, Cloudflare Tunnel) ou a URL pública do seu servidor.
+**Produção (VPS Hostinger, etc.)** — use a URL pública com HTTPS:
+
+```env
+JURIDICO_API_URL=https://api.seudominio.com.br
+```
+
+Guia completo para VPS: [DEPLOY-VPS-HOSTINGER.md](./DEPLOY-VPS-HOSTINGER.md).
 
 ## Parar
 

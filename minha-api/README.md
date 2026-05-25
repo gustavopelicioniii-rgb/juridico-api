@@ -131,7 +131,7 @@ cp .env.docker.example .env
 docker compose up -d --build
 ```
 
-Detalhes em [DEPLOY-DOCKER.md](./DEPLOY-DOCKER.md).
+Detalhes em [DEPLOY-DOCKER.md](./DEPLOY-DOCKER.md). Para VPS online (Hostinger): [DEPLOY-VPS-HOSTINGER.md](./DEPLOY-VPS-HOSTINGER.md).
 
 ### Scripts
 

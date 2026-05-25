@@ -1,0 +1,82 @@
+# Produção na VPS — Postgres/Redis só na rede interna (não expõe 5432/6379 na internet)
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: juridico-api
+    ports:
+      - "127.0.0.1:3000:3000"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/juridico
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - juridico-network
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: juridico-worker
+    command: ["node", "dist/worker.js"]
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/juridico
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - juridico-network
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: juridico-postgres
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=juridico
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - juridico-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: juridico-redis
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - juridico-network
+
+networks:
+  juridico-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
