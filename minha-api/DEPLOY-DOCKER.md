@@ -18,9 +18,9 @@ Serviços:
 
 | Serviço   | Porta | Descrição        |
 |-----------|-------|------------------|
-| api       | 3000  | API REST         |
-| postgres  | 5432  | Banco PostgreSQL |
-| redis     | 6379  | Filas Bull       |
+| api       | 3000  | API REST (única porta exposta no host) |
+| postgres  | —     | Só rede Docker (`postgres:5432`)       |
+| redis     | —     | Só rede Docker (`redis:6379`)          |
 | worker    | —     | Processamento de filas |
 
 ## Verificar

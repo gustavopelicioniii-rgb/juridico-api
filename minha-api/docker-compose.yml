@@ -36,8 +36,7 @@ services:
       - POSTGRES_DB=juridico
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    # Sem ports: evita conflito com PostgreSQL da VPS (5432). Acesso só via rede Docker.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -50,8 +49,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: juridico-redis
-    ports:
-      - "6379:6379"
+    # Sem ports: evita conflito com Redis local (6379). Acesso só via rede Docker.
     volumes:
       - redis_data:/data
     restart: unless-stopped

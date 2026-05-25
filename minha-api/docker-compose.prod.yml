@@ -1,5 +1,4 @@
 # Produção na VPS — Postgres/Redis só na rede interna (não expõe 5432/6379 na internet)
-version: '3.8'
 
 services:
   api:
