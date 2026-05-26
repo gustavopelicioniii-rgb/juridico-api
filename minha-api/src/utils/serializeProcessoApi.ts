@@ -39,6 +39,12 @@ export interface ProcessoApiResponse {
   }>;
 }
 
+export function normalizarNumeroProcesso(value: string): string {
+  const trimmed = String(value || '').trim();
+  const onlyDigits = trimmed.replace(/\D/g, '');
+  return onlyDigits || trimmed;
+}
+
 function toIsoDate(value?: Date | string | null): string | undefined {
   if (value == null) return undefined;
   if (value instanceof Date) {
@@ -165,11 +171,12 @@ export async function montarProcessosParaApi(
 ): Promise<ProcessoApiResponse[]> {
   if (numerosProcesso.length === 0) return [];
 
-  const dbRows = await findProcessos(numerosProcesso);
-  const dbMap = new Map(dbRows.map(row => [row.numeroProcesso, row]));
-  const resumoMap = new Map(resumo.map(item => [item.numeroProcesso, item]));
+  const numerosNormalizados = Array.from(new Set(numerosProcesso.map(normalizarNumeroProcesso)));
+  const dbRows = await findProcessos(numerosNormalizados);
+  const dbMap = new Map(dbRows.map(row => [normalizarNumeroProcesso(row.numeroProcesso), row]));
+  const resumoMap = new Map(resumo.map(item => [normalizarNumeroProcesso(item.numeroProcesso), item]));
 
-  return numerosProcesso.flatMap(numero => {
+  return numerosNormalizados.flatMap(numero => {
     const db = dbMap.get(numero);
     const item = resumoMap.get(numero);
     if (db?.enriquecido === true) return serializeProcessoModel(db, tribunalCodigo, item);

@@ -12,6 +12,7 @@ import TribunalService from './TribunalService';
 import { Processo, OABMonitorada } from '../models';
 import notificationService from '../websocket/NotificationService';
 import logger from '../config/logger';
+import { normalizarNumeroProcesso } from '../utils/serializeProcessoApi';
 
 const INTERVALO_PADRAO_MS = 5 * 60 * 1000;
 
@@ -170,7 +171,9 @@ class ProcessoMonitoramentoService {
         if (adapter) {
           const busca = await adapter.buscarPorOAB(oab.toUpperCase().replace(/\s/g, ''));
           resultado.processosTotal = busca.processos.length;
-          numerosAtuais.push(...busca.processos.map((r: any) => r.numeroProcesso));
+          numerosAtuais.push(
+            ...busca.processos.map((r: any) => normalizarNumeroProcesso(r.numeroProcesso))
+          );
         }
       } catch (error: any) {
         resultado.erros.push(`DataJud: ${error.message}`);
@@ -180,24 +183,28 @@ class ProcessoMonitoramentoService {
         return resultado;
       }
 
+      const numerosUnicos = Array.from(new Set(numerosAtuais));
       const jaSalvos = await Processo.findAll({
-        where: { numeroProcesso: { [Op.in]: numerosAtuais } },
+        where: { numeroProcesso: { [Op.in]: numerosUnicos } },
         attributes: ['numeroProcesso', 'createdAt'],
         raw: true,
       });
 
-      const numerosSalvos = new Set(jaSalvos.map((p: any) => p.numeroProcesso));
+      const numerosSalvos = new Set(
+        jaSalvos.map((p: any) => normalizarNumeroProcesso(p.numeroProcesso))
+      );
 
-      resultado.processosNovos = numerosAtuais.filter(n => !numerosSalvos.has(n));
-      resultado.processosAtualizados = numerosAtuais.filter(n => numerosSalvos.has(n));
+      resultado.processosNovos = numerosUnicos.filter(n => !numerosSalvos.has(n));
+      resultado.processosAtualizados = numerosUnicos.filter(n => numerosSalvos.has(n));
 
       if (resultado.processosNovos.length > 0) {
         logger.info(`[Monitoramento] ${oab}: ${resultado.processosNovos.length} novos processos`);
 
         const resultadoEnriquecido = await buscarPorOABEnriquecido(oab, true);
 
+        const novos = new Set(resultado.processosNovos);
         const novosEnriquecidos = resultadoEnriquecido.processos.filter(
-          (p: any) => resultado.processosNovos.includes(p.numeroProcesso)
+          (p: any) => novos.has(normalizarNumeroProcesso(p.numeroProcesso))
         );
 
         const { salvos, erros } = await salvarLoteProcessos(novosEnriquecidos);

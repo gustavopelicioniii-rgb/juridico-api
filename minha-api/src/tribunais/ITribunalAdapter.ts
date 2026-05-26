@@ -74,6 +74,15 @@ export interface ResultadoBusca {
     movimentacoes?: DadosMovimentacao[];
   }>;
   total: number;
+  fontes?: Array<{
+    fonte: string;
+    status: 'success' | 'empty' | 'requires-auth' | 'captcha' | 'blocked' | 'error' | 'unsupported';
+    tribunalCodigo: string;
+    url?: string;
+    mensagem?: string;
+    total?: number;
+    tempoMs?: number;
+  }>;
 }
 
 export interface ITribunalAdapter {

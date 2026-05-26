@@ -3,7 +3,7 @@
  * Orquestra a busca de processos usando os adaptadores e salva no banco
  */
 
-import { registry, DadosProcesso } from '../tribunais';
+import { registry, DadosProcesso, ResultadoBusca } from '../tribunais';
 import Tribunal from '../models/Tribunal';
 import Processo from '../models/Processo';
 import Parte from '../models/Parte';
@@ -17,6 +17,7 @@ import oabCacheService from './OABCacheService';
 import {
   extrairResumoCache,
   montarProcessosParaApi,
+  normalizarNumeroProcesso,
   type OABProcessoResumo,
   type ProcessoApiResponse,
 } from '../utils/serializeProcessoApi';
@@ -24,6 +25,7 @@ import {
 const CACHE_TTL_MINUTES = 30;
 const MAX_PARALLEL_FETCHES = 5; // Paralelo para produção
 const ENRICHMENT_TIMEOUT_MS = 45000; // Crawlers públicos podem oscilar por processo
+const UF_PREFIX_REGEX = /^(AC|AL|AM|AP|BA|CE|DF|ES|GO|MA|MG|MS|MT|PA|PB|PE|PI|PR|RJ|RN|RO|RR|RS|SC|SE|SP|TO)/;
 
 /**
  * Executa função com timeout
@@ -58,6 +60,11 @@ function valorInteiro(value?: number): number | undefined {
 function limitarTexto(value: string | undefined, maxLength: number): string | undefined {
   if (!value) return undefined;
   return value.length > maxLength ? value.slice(0, maxLength) : value;
+}
+
+function buildOABCacheKeys(oabNormalizada: string): string[] {
+  const semUf = oabNormalizada.replace(UF_PREFIX_REGEX, '');
+  return Array.from(new Set([oabNormalizada, semUf].filter(Boolean)));
 }
 
 export interface ResultadoBuscaProcesso {
@@ -337,10 +344,17 @@ class TribunalService {
     nome?: string,
     advogadoId?: string,
     forceRefresh = false,
-    limiteProcessos?: number
-  ): Promise<{ processos: ProcessoApiResponse[]; doCache: boolean; tempoMs: number }> {
+    limiteProcessos?: number,
+    onlyMissing = false
+  ): Promise<{
+    processos: ProcessoApiResponse[];
+    doCache: boolean;
+    tempoMs: number;
+    fontes?: ResultadoBusca['fontes'];
+  }> {
     const inicio = Date.now();
     const oabNormalizada = oab.toUpperCase().replace(/\s/g, '');
+    const oabCacheKeys = buildOABCacheKeys(oabNormalizada);
     const buscaComFiltroNome = Boolean(nome?.trim());
     const buscaLimitada = typeof limiteProcessos === 'number' && limiteProcessos > 0;
     const carregarProcessos = (numeros: string[]) =>
@@ -352,8 +366,20 @@ class TribunalService {
         ],
       });
 
+    if (forceRefresh || onlyMissing || buscaComFiltroNome) {
+      for (const cacheKey of oabCacheKeys) {
+        oabCacheService.invalidate(cacheKey, tribunalCodigo);
+      }
+      await OABBuscaCache.destroy({
+        where: {
+          oab: { [Op.in]: oabCacheKeys },
+          tribunalCodigo,
+        },
+      });
+    }
+
     // ===== L1: Cache em memória (verifica primeiro - mais rápido) =====
-    if (!forceRefresh && !buscaComFiltroNome && !buscaLimitada) {
+    if (!forceRefresh && !onlyMissing && !buscaComFiltroNome && !buscaLimitada) {
       const entryL1 = oabCacheService.get(oabNormalizada, tribunalCodigo);
       if (entryL1) {
         logger.info(`[Cache OAB] L1 HIT para ${oabNormalizada} em ${tribunalCodigo}`);
@@ -369,7 +395,7 @@ class TribunalService {
     }
 
     // ===== L2: Cache de banco (se L1 miss) =====
-    if (!forceRefresh && !buscaComFiltroNome && !buscaLimitada) {
+    if (!forceRefresh && !onlyMissing && !buscaComFiltroNome && !buscaLimitada) {
       const cacheEntryL2 = await OABBuscaCache.findOne({
         where: {
           oab: oabNormalizada,
@@ -413,9 +439,31 @@ class TribunalService {
     }
 
     const resultado = await adapter.buscarPorOAB(oabNormalizada, nome);
-    const processosResultado = buscaLimitada
+    const fontes = resultado.fontes || [];
+    let processosResultado = buscaLimitada
       ? resultado.processos.slice(0, Math.max(1, Math.floor(limiteProcessos)))
       : resultado.processos;
+
+    if (onlyMissing && processosResultado.length > 0) {
+      const numerosResultado = Array.from(
+        new Set(processosResultado.map(proc => normalizarNumeroProcesso(proc.numeroProcesso)))
+      );
+      const processosExistentes = await Processo.findAll({
+        where: { numeroProcesso: { [Op.in]: numerosResultado } },
+        attributes: ['numeroProcesso'],
+        raw: true,
+      });
+      const numerosExistentes = new Set(
+        processosExistentes.map(proc => normalizarNumeroProcesso(proc.numeroProcesso))
+      );
+      processosResultado = processosResultado.filter(
+        proc => !numerosExistentes.has(normalizarNumeroProcesso(proc.numeroProcesso))
+      );
+      logger.info(
+        `[Cache OAB] Modo somente ausentes para ${oabNormalizada}: ${processosResultado.length}/${numerosResultado.length} processos ainda nao cadastrados`
+      );
+    }
+
     const numerosProcessos: string[] = [];
     const resumoOab: OABProcessoResumo[] = [];
     const enriquecidosComSucesso: string[] = [];
@@ -474,7 +522,7 @@ class TribunalService {
     // Salva nos dois níveis de cache
     const ttlMs = CACHE_TTL_MINUTES * 60 * 1000;
 
-    if (!buscaComFiltroNome && !buscaLimitada) {
+    if (!buscaComFiltroNome && !buscaLimitada && !onlyMissing) {
       // L1: Cache em memória
       oabCacheService.set(oabNormalizada, tribunalCodigo, numerosEnriquecidos, ttlMs, nome, resumoOab);
 
@@ -501,7 +549,7 @@ class TribunalService {
     const tempoMs = Date.now() - inicio;
     logger.info(`[Cache OAB] Busca completada para ${oabNormalizada}: ${numerosProcessos.length} processos (${numerosEnriquecidos.length} enriquecidos) em ${tempoMs}ms`);
 
-    return { processos, doCache: false, tempoMs };
+    return { processos, doCache: false, tempoMs, fontes };
   }
   
   /**

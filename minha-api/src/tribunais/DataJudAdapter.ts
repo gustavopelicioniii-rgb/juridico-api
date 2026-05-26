@@ -438,7 +438,7 @@ export class DataJudAdapter extends BaseTribunalAdapter {
 
     return {
       processos: itens.map(item => ({
-        numeroProcesso: item.numeroProcesso,
+        numeroProcesso: this.formatarNumeroProcesso(item.numeroProcesso),
         tribunalCodigo: this.codigo,
       })),
       total: itens.length,
