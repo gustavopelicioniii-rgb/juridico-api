@@ -23,6 +23,7 @@ import {
   ResultadoBusca,
 } from './ITribunalAdapter';
 import logger from '../config/logger';
+import { buscarPorFontesOficiais, OABSourceLog } from './providers/OABSearchProvider';
 
 const DATAJUD_BASE_URL = 'https://api-publica.datajud.cnj.jus.br';
 const ESAJ_TJSP_BASE_URL = 'https://esaj.tjsp.jus.br';
@@ -201,9 +202,36 @@ export class DataJudAdapter extends BaseTribunalAdapter {
       const resultadoEsaj = await this.buscarPorOABEsajTJSP(oabNumero, nome);
       if (resultadoEsaj.total > 0) {
         logger.info(`DataJudAdapter[${this.codigo}] OAB ${oabNumero}: ${resultadoEsaj.total} processos encontrados via ESAJ`);
-        return resultadoEsaj;
+        return {
+          ...resultadoEsaj,
+          fontes: [{
+            fonte: 'esaj',
+            status: 'success',
+            tribunalCodigo: this.codigo,
+            url: ESAJ_TJSP_BASE_URL,
+            mensagem: 'Processos encontrados via consulta pública ESAJ.',
+            total: resultadoEsaj.total,
+          }],
+        };
       }
       logger.warn(`DataJudAdapter[${this.codigo}] ESAJ não retornou processos para OAB ${oabNumero}; tentando DataJud`);
+    }
+
+    const sourceLogs: OABSourceLog[] = [];
+    if (this.codigo !== 'TJSP') {
+      const officialSources = await buscarPorFontesOficiais({
+        tribunalCodigo: this.codigo,
+        oabNumero,
+        nome,
+      });
+      sourceLogs.push(...officialSources.logs);
+      if (officialSources.processos.length > 0) {
+        return {
+          processos: officialSources.processos,
+          total: officialSources.processos.length,
+          fontes: sourceLogs,
+        };
+      }
     }
 
     try {
@@ -251,6 +279,16 @@ export class DataJudAdapter extends BaseTribunalAdapter {
       const total = hits.length;
 
       logger.info(`DataJudAdapter[${this.codigo}] OAB ${oabNumero}: ${total} processos encontrados`);
+      sourceLogs.push({
+        fonte: 'datajud',
+        status: total > 0 ? 'success' : 'empty',
+        tribunalCodigo: this.codigo,
+        url: this.baseUrl,
+        mensagem: total > 0
+          ? 'Processos encontrados no DataJud com OAB indexada.'
+          : 'DataJud respondeu, mas não expôs processos para essa OAB.',
+        total,
+      });
 
       return {
         processos: hits.map(h => {
@@ -277,6 +315,7 @@ export class DataJudAdapter extends BaseTribunalAdapter {
           };
         }),
         total,
+        fontes: sourceLogs,
       };
     } catch (error: any) {
       if (error.response?.status === 401) {
@@ -286,7 +325,15 @@ export class DataJudAdapter extends BaseTribunalAdapter {
         throw new Error('Rate limit DataJud excedido');
       }
       logger.error(`DataJudAdapter[${this.codigo}] erro ao buscar por OAB:`, { oab, erro: error.message });
-      return { processos: [], total: 0 };
+      sourceLogs.push({
+        fonte: 'datajud',
+        status: 'error',
+        tribunalCodigo: this.codigo,
+        url: this.baseUrl,
+        mensagem: error.message,
+        total: 0,
+      });
+      return { processos: [], total: 0, fontes: sourceLogs };
     }
   }
 
@@ -791,55 +838,4 @@ export class DataJudAdapter extends BaseTribunalAdapter {
   }
 }
 
-/**
- * Mapeamento código interno → sigla DataJud
- * Total: 91 tribunais (5 superiores + 27 estaduais + 6 federais + 24 trabalhistas + 27 eleitorais/militares)
- */
-export const DATAJUD_TRIBUNAIS: Record<string, string> = {
-  // Tribunais Superiores
-  STF: 'stf',
-  STJ: 'stj',
-  TST: 'tst',
-  TSE: 'tse',
-  STM: 'stm',
-
-  // Tribunais de Justiça (27 + DF)
-  TJSP: 'tjsp',
-  TJRJ: 'tjrj',
-  TJMG: 'tjmg',
-  TJRS: 'tjrs',
-  TJBA: 'tjba',
-  TJPR: 'tjpr',
-  TJSC: 'tjsc',
-  TJGO: 'tjgo',
-  TJDFT: 'tjdft',
-  TJPE: 'tjpe',
-  TJCE: 'tjce',
-  TJES: 'tjes',
-  TJMS: 'tjms',
-  TJMT: 'tjmt',
-  TJPB: 'tjpb',
-  TJRN: 'tjrn',
-  TJAL: 'tjal',
-  TJSE: 'tjse',
-  TJPI: 'tjpi',
-  TJMA: 'tjma',
-  TJPA: 'tjpa',
-  TJAM: 'tjam',
-  TJAP: 'tjap',
-  TJRO: 'tjro',
-  TJRR: 'tjrr',
-  TJAC: 'tjac',
-  TJTO: 'tjto',
-
-  // Tribunais Regionais Federais (6)
-  TRF1: 'trf1',
-  TRF2: 'trf2',
-  TRF3: 'trf3',
-  TRF4: 'trf4',
-  TRF5: 'trf5',
-  TRF6: 'trf6',
-
-  // Tribunais Regionais do Trabalho (24)
-  ...Object.fromEntries(Array.from({ length: 24 }, (_, i) => [`TRT${i + 1}`, `trt${i + 1}`])),
-};
+export { DATAJUD_TRIBUNAIS } from '../config/datajudSiglas';

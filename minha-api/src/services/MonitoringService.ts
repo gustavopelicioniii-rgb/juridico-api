@@ -10,6 +10,11 @@ import Processo from '../models/Processo';
 import Movimentacao from '../models/Movimentacao';
 import Tribunal from '../models/Tribunal';
 import logger from '../config/logger';
+import {
+  DEFAULT_MONITORING_POLL_INTERVAL_MS,
+  DEFAULT_PROCESS_MONITORING_INTERVAL_MINUTES,
+  normalizeProcessMonitoringInterval,
+} from '../config/monitoring';
 
 export interface MonitoringResult {
   processoId: string;
@@ -21,7 +26,7 @@ export interface MonitoringResult {
 class MonitoringService {
   private isRunning: boolean = false;
   private pollInterval: NodeJS.Timeout | null = null;
-  private intervalMs: number = 60 * 1000; // 1 minuto default
+  private intervalMs: number = DEFAULT_MONITORING_POLL_INTERVAL_MS;
   
   /**
    * Inicia o serviço de monitoramento
@@ -38,8 +43,8 @@ class MonitoringService {
     
     this.isRunning = true;
     
-    // Executa imediatamente
-    this.poll();
+    void this.ensureMonitoramentosAtivos();
+    void this.poll();
     
     // Agenda execução periódica
     this.pollInterval = setInterval(() => {
@@ -135,9 +140,9 @@ class MonitoringService {
         };
       }
       
-      // Atualiza timestamp de último poll
+      // Marca o monitoramento como agendado para evitar jobs duplicados entre polls.
       await monitoramento.update({ ultimoPoll: agora });
-      
+
       // Agenda scraping na fila (não executa diretamente para não bloquear)
       const tribunal = await Tribunal.findByPk(processo.tribunalId);
       await agendarScraping({
@@ -145,10 +150,10 @@ class MonitoringService {
         tribunalCodigo: tribunal?.codigo || 'TJSP',
         advogadoId: processo.advogadoId,
         processoId: processo.id,
+        monitoramentoId: monitoramento.id,
         prioridade: 1, // Baixa prioridade para polling
       });
-      
-      // Busca count de novas movimentações desde o último poll
+
       const novasMovimentacoes = await Movimentacao.count({
         where: {
           processoId: processo.id,
@@ -181,8 +186,11 @@ class MonitoringService {
   async criarMonitoramento(
     processoId: string,
     advogadoId: string,
-    intervaloMinutos: number = 60
+    intervaloMinutos: number = DEFAULT_PROCESS_MONITORING_INTERVAL_MINUTES,
+    pollImmediately = false
   ): Promise<Monitoramento> {
+    const intervalo = normalizeProcessMonitoringInterval(intervaloMinutos);
+
     // Verifica se já existe monitoramento ativo
     const existente = await Monitoramento.findOne({
       where: { processoId, ativo: true },
@@ -190,16 +198,16 @@ class MonitoringService {
     
     if (existente) {
       // Atualiza intervalo
-      await existente.update({ intervaloMinutos });
+      await existente.update({ intervaloMinutos: intervalo });
       return existente;
     }
     
     return Monitoramento.create({
       processoId,
       advogadoId,
-      intervaloMinutos,
+      intervaloMinutos: intervalo,
       ativo: true,
-      ultimoPoll: new Date(),
+      ultimoPoll: pollImmediately ? undefined : new Date(),
     });
   }
   
@@ -233,6 +241,41 @@ class MonitoringService {
       ],
       order: [['createdAt', 'DESC']],
     });
+  }
+
+  /**
+   * Garante que processos ativos associados a advogado tenham monitoramento diário.
+   */
+  private async ensureMonitoramentosAtivos(): Promise<void> {
+    try {
+      const processos = await Processo.findAll({
+        where: { status: 'MONITORANDO' },
+        attributes: ['id', 'advogadoId'],
+      });
+
+      let criados = 0;
+      for (const processo of processos) {
+        if (!processo.advogadoId) continue;
+        const existente = await Monitoramento.findOne({
+          where: { processoId: processo.id, ativo: true },
+        });
+        if (existente) continue;
+
+        await Monitoramento.create({
+          processoId: processo.id,
+          advogadoId: processo.advogadoId,
+          intervaloMinutos: DEFAULT_PROCESS_MONITORING_INTERVAL_MINUTES,
+          ativo: true,
+        });
+        criados++;
+      }
+
+      if (criados > 0) {
+        logger.info(`MonitoringService criou ${criados} monitoramentos diários ausentes`);
+      }
+    } catch (error) {
+      logger.error('Erro ao garantir monitoramentos ativos:', error);
+    }
   }
 }
 

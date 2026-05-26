@@ -232,6 +232,7 @@ export const CACHE_KEYS = {
   PARTES: 'partes',
   TRIBUNAL_STATUS: 'tribunal:status',
   OAB_PROCESSOS: 'oab:processos',
+  FIRECRAWL_AUX: 'firecrawl:aux',
 } as const;
 
 // Cache TTL in seconds
@@ -241,6 +242,7 @@ export const CACHE_TTL = {
   PARTES: 3600, // 1 hour
   TRIBUNAL_STATUS: 300, // 5 minutes
   OAB_PROCESSOS: 1800, // 30 minutes
+  FIRECRAWL_AUX: 86400, // 24 hours
 } as const;
 
 export default cache;

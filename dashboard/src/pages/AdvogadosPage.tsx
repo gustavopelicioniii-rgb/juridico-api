@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Search, Plus, Edit2, Trash2, FileText, Phone, Mail, X, Loader2, Search as SearchIcon } from 'lucide-react';
 import { isAxiosError } from 'axios';
-import { advogadoService, processoService } from '../services/api';
+import { advogadoService, processoService, jobService } from '../services/api';
 import type { Advogado, Processo } from '../types/api';
 
 export default function AdvogadosPage() {
@@ -31,6 +31,7 @@ export default function AdvogadosPage() {
   const [processos, setProcessos] = useState<Processo[]>([]);
   const [processosLoading, setProcessosLoading] = useState(false);
   const [onboardingMessage, setOnboardingMessage] = useState<string | null>(null);
+  const [searchingOABAdvogadoId, setSearchingOABAdvogadoId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchAdvogados();
@@ -121,30 +122,63 @@ export default function AdvogadosPage() {
     }
   };
 
+  const waitForOABJob = async (jobId: string, advogado: Advogado) => {
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    for (let attempt = 0; attempt < 80; attempt++) {
+      await sleep(3000);
+      const job = await jobService.getById(jobId);
+
+      if (job.status === 'CONCLUIDO' || job.status === 'COMPLETED') {
+        const data = await advogadoService.getProcessos(advogado.id);
+        if (selectedAdvogado?.id === advogado.id) {
+          setProcessos(data);
+        }
+        setOnboardingMessage(
+          `Busca concluída para ${advogado.nome}. ${data.length} processo(s) disponíveis para esta OAB.`
+        );
+        return;
+      }
+
+      if (job.status === 'FALHO' || job.status === 'FAILED') {
+        throw new Error(job.erro || 'A busca por OAB falhou no servidor.');
+      }
+
+      if (attempt === 0 || attempt % 5 === 0) {
+        setOnboardingMessage(
+          `Busca por OAB em andamento para ${advogado.nome}. Você pode continuar usando o sistema.`
+        );
+      }
+    }
+
+    setOnboardingMessage(
+      `Busca por OAB ainda em processamento para ${advogado.nome}. Abra os processos novamente em alguns minutos.`
+    );
+  };
+
   const handleBuscarProcessos = async (advogado: Advogado) => {
     const tribunal = window.prompt('Digite o código do tribunal (ex.: TJSP, TJMG, TRT2, STJ):')?.trim().toUpperCase();
     if (!tribunal) return;
     
     try {
-      const resultado = await processoService.searchByOAB(tribunal, {
+      setSearchingOABAdvogadoId(advogado.id);
+      const resultado = await processoService.searchByOABAsync(tribunal, {
         oab: advogado.oab,
         nome: advogado.nome,
         advogadoId: advogado.id,
       });
-      if (resultado.processos && resultado.processos.length > 0) {
-        alert(
-          `Encontrado(s) ${resultado.totalEncontrados} processo(s): ${resultado.processos.map((p) => p.numeroProcesso || p.numero).join(', ')}`
-        );
-      } else {
-        alert('Nenhum processo encontrado');
-      }
+
+      setOnboardingMessage(resultado.mensagem || `Busca por OAB agendada para ${advogado.nome}.`);
+      await waitForOABJob(resultado.jobId, advogado);
     } catch (err) {
       console.error('Erro ao buscar processos:', err);
       if (isAxiosError(err) && (err.code === 'ECONNABORTED' || err.message.includes('timeout'))) {
-        alert('A consulta passou do tempo limite (5 minutos). A API pode ainda estar processando — aguarde e tente de novo.');
+        setOnboardingMessage('A busca foi agendada, mas a confirmação demorou. Verifique os processos em alguns minutos.');
       } else {
-        alert('Erro ao buscar processos no tribunal');
+        setOnboardingMessage(err instanceof Error ? err.message : 'Erro ao buscar processos no tribunal.');
       }
+    } finally {
+      setSearchingOABAdvogadoId(null);
     }
   };
 
@@ -247,10 +281,15 @@ export default function AdvogadosPage() {
                 </button>
                 <button
                   onClick={() => handleBuscarProcessos(advogado)}
-                  className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+                  disabled={searchingOABAdvogadoId === advogado.id}
+                  className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors disabled:opacity-50 disabled:cursor-wait"
                   title="Buscar processos no tribunal"
                 >
-                  <SearchIcon className="w-4 h-4" />
+                  {searchingOABAdvogadoId === advogado.id ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <SearchIcon className="w-4 h-4" />
+                  )}
                 </button>
                 <button 
                   onClick={() => openEditModal(advogado)}

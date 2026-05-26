@@ -8,12 +8,14 @@ import Tribunal from '../models/Tribunal';
 import Processo from '../models/Processo';
 import Parte from '../models/Parte';
 import Movimentacao from '../models/Movimentacao';
+import Monitoramento from '../models/Monitoramento';
 import Job from '../models/Job';
 import OABBuscaCache from '../models/OABBuscaCache';
 import { sequelize } from '../config/database';
 import { Transaction, Op } from 'sequelize';
 import logger from '../config/logger';
 import oabCacheService from './OABCacheService';
+import { DEFAULT_PROCESS_MONITORING_INTERVAL_MINUTES } from '../config/monitoring';
 import {
   extrairResumoCache,
   montarProcessosParaApi,
@@ -172,6 +174,10 @@ class TribunalService {
         t
       );
 
+      if (advogadoId) {
+        await this.garantirMonitoramentoDiario(processo.id, advogadoId, t);
+      }
+
       return {
         processo,
         ehNovo,
@@ -179,6 +185,29 @@ class TribunalService {
         novasMovimentacoes: resultadoMovimentacoes.novas,
       };
     });
+  }
+
+  private async garantirMonitoramentoDiario(
+    processoId: string,
+    advogadoId: string,
+    t: Transaction
+  ): Promise<void> {
+    const existente = await Monitoramento.findOne({
+      where: { processoId, ativo: true },
+      transaction: t,
+    });
+
+    if (existente) {
+      return;
+    }
+
+    await Monitoramento.create({
+      processoId,
+      advogadoId,
+      intervaloMinutos: DEFAULT_PROCESS_MONITORING_INTERVAL_MINUTES,
+      ativo: true,
+      ultimoPoll: new Date(),
+    }, { transaction: t });
   }
 
   /**
@@ -288,7 +317,7 @@ class TribunalService {
       `Salvas ${movimentacoesSemDuplicidade.length} movimentações para processo ${processoId} (${totalNovasRecentes} recentes, ${totalDuplicadasIgnoradas} duplicadas ignoradas)`
     );
 
-    return { novas: movimentacoesSemDuplicidade.length, total: movimentacoes.length };
+    return { novas: totalNovasRecentes, total: movimentacoes.length };
   }
   
   /**

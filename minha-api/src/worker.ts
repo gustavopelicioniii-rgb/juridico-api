@@ -14,6 +14,7 @@ import ProcessoMonitoramentoService from './services/ProcessoMonitoramentoServic
 import logger from './config/logger';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
+import { DEFAULT_MONITORING_POLL_INTERVAL_MS } from './config/monitoring';
 
 const PORT = process.env.WORKER_PORT || 4000;
 
@@ -35,7 +36,7 @@ async function main() {
     // Inicia fila Bull (começa automaticamente no import)
 
     // Inicia serviço de monitoramento
-    MonitoringService.start(60 * 1000); // a cada 1 minuto
+    MonitoringService.start(DEFAULT_MONITORING_POLL_INTERVAL_MS);
     ProcessoMonitoramentoService.iniciar();
 
     logger.info('Worker started successfully');

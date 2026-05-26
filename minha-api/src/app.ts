@@ -22,6 +22,7 @@ import ProcessoMonitoramentoService from './services/ProcessoMonitoramentoServic
 import ngrokService from './services/NgrokService';
 import oabCacheService from './services/OABCacheService';
 import { listarTribunaisDataJud } from './config/datajudTribunais';
+import { DEFAULT_MONITORING_POLL_INTERVAL_MS } from './config/monitoring';
 
 dotenv.config();
 
@@ -309,7 +310,7 @@ const startServer = async () => {
     // Inicia MonitoringService se habilitado (padrão: true em produção)
     const monitoringEnabled = process.env.ENABLE_MONITORING !== 'false';
     if (monitoringEnabled) {
-      const intervalMs = parseInt(process.env.MONITORING_INTERVAL_MS || '60000', 10);
+      const intervalMs = parseInt(process.env.MONITORING_INTERVAL_MS || String(DEFAULT_MONITORING_POLL_INTERVAL_MS), 10);
       MonitoringService.start(intervalMs);
       logger.info(`MonitoringService enabled (interval: ${intervalMs}ms)`);
     } else {

@@ -11,16 +11,84 @@ import Parte from '../models/Parte';
 import Job from '../models/Job';
 import Notification from '../models/Notification';
 import TribunalService from '../services/TribunalService';
+import FirecrawlEnrichmentService from '../services/FirecrawlEnrichmentService';
+import { agendarFirecrawlEnrichment, agendarOABCrawl } from '../queues/ScraperQueue';
 import { authRouter } from './auth';
 import { authMiddleware } from '../middleware/auth';
 import { cache, CACHE_TTL, CACHE_KEYS } from '../config/redis';
 import logger from '../config/logger';
+import {
+  DEFAULT_PROCESS_MONITORING_INTERVAL_MINUTES,
+  normalizeProcessMonitoringInterval,
+} from '../config/monitoring';
 
 const router = Router();
 
 const getRequestId = (req: Request): string | undefined => {
   const withRequestId = req as Request & { requestId?: string };
   return withRequestId.requestId;
+};
+
+type BuscaOABStatus = 'success' | 'empty' | 'captcha' | 'requires-auth' | 'blocked';
+
+const buildAcaoRequerida = (fonte?: {
+  fonte: string;
+  status: string;
+  tribunalCodigo: string;
+  url?: string;
+  mensagem?: string;
+}) => {
+  if (!fonte) return undefined;
+
+  if (fonte.status === 'captcha') {
+    return {
+      tipo: 'captcha',
+      titulo: 'Captcha requerido pelo tribunal',
+      mensagem: fonte.mensagem || 'O portal oficial exige resolução manual de captcha para continuar.',
+      fonte: fonte.fonte,
+      tribunalCodigo: fonte.tribunalCodigo,
+      url: fonte.url,
+      proximosPassos: [
+        'Abrir o portal oficial indicado.',
+        'Resolver o captcha manualmente ou acessar com sessão autorizada.',
+        'Reexecutar a captura após liberar a consulta pública.',
+      ],
+    };
+  }
+
+  if (fonte.status === 'requires-auth') {
+    return {
+      tipo: 'credencial',
+      titulo: 'Credencial ou certificado requerido',
+      mensagem: fonte.mensagem || 'O portal oficial exige login, certificado digital ou convênio para consulta por OAB.',
+      fonte: fonte.fonte,
+      tribunalCodigo: fonte.tribunalCodigo,
+      url: fonte.url,
+      proximosPassos: [
+        'Usar credenciais/certificado do advogado com consentimento.',
+        'Verificar se existe API, MNI ou convênio oficial para o tribunal.',
+        'Reexecutar a captura com acesso autenticado quando disponível.',
+      ],
+    };
+  }
+
+  if (fonte.status === 'blocked') {
+    return {
+      tipo: 'indisponivel',
+      titulo: 'Fonte pública indisponível para automação',
+      mensagem: fonte.mensagem || 'O portal oficial bloqueou a consulta automatizada.',
+      fonte: fonte.fonte,
+      tribunalCodigo: fonte.tribunalCodigo,
+      url: fonte.url,
+      proximosPassos: [
+        'Consultar fonte oficial alternativa.',
+        'Usar importação individual por número CNJ quando disponível.',
+        'Registrar necessidade de integração formal com o tribunal.',
+      ],
+    };
+  }
+
+  return undefined;
 };
 
 const logRouteError = (req: Request, route: string, error: unknown) => {
@@ -302,6 +370,134 @@ router.get('/processos/:id', async (req: Request, res: Response) => {
   }
 });
 
+router.get('/processos/:id/enriquecimento/firecrawl', async (req: Request, res: Response) => {
+  try {
+    const processo = await Processo.findByPk(req.params.id);
+
+    if (!processo) {
+      return res.status(404).json({ erro: { codigo: 'PROCESSO_NAO_ENCONTRADO', mensagem: 'Processo não encontrado.' } });
+    }
+
+    const dadosOriginais = (processo.dadosOriginais ?? {}) as Record<string, unknown>;
+    res.json({
+      processoId: processo.id,
+      numeroProcesso: processo.numeroProcesso,
+      firecrawlAux: dadosOriginais.firecrawlAux ?? null,
+    });
+  } catch (error) {
+    logRouteError(req, 'GET /processos/:id/enriquecimento/firecrawl', error);
+    res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar enriquecimento Firecrawl.' } });
+  }
+});
+
+router.post('/processos/:id/enriquecimento/firecrawl', async (req: Request, res: Response) => {
+  let auditJob: Job | undefined;
+
+  try {
+    if (!FirecrawlEnrichmentService.isEnabled()) {
+      return res.status(503).json({
+        erro: {
+          codigo: 'FIRECRAWL_DISABLED',
+          mensagem: 'Firecrawl está desativado. Defina FIRECRAWL_ENABLED=true para usar enriquecimento auxiliar.',
+        },
+      });
+    }
+
+    if (!FirecrawlEnrichmentService.isReady()) {
+      return res.status(503).json({
+        erro: {
+          codigo: 'FIRECRAWL_NOT_CONFIGURED',
+          mensagem: 'Configure FIRECRAWL_API_KEY antes de usar enriquecimento auxiliar.',
+        },
+      });
+    }
+
+    const processo = await Processo.findByPk(req.params.id);
+
+    if (!processo) {
+      return res.status(404).json({ erro: { codigo: 'PROCESSO_NAO_ENCONTRADO', mensagem: 'Processo não encontrado.' } });
+    }
+
+    const { urls, forceRefresh, onlyMainContent, requestedBy } = req.body;
+    let urlsNormalizadas: string[];
+
+    try {
+      urlsNormalizadas = FirecrawlEnrichmentService.validateUrls(urls);
+    } catch (error) {
+      return res.status(400).json({
+        erro: {
+          codigo: 'VALIDATION_ERROR',
+          mensagem: (error as Error).message,
+        },
+      });
+    }
+
+    const tribunal = processo.tribunalId ? await Tribunal.findByPk(processo.tribunalId) : null;
+    const correlationId = `${processo.id}:${Date.now()}`;
+
+    auditJob = await Job.create({
+      processoId: processo.id,
+      tipo: 'SCRAPE',
+      status: 'PENDENTE',
+      scheduledAt: new Date(),
+      tentativas: 0,
+      maxTentativas: 2,
+      payload: {
+        mode: 'firecrawl_aux',
+        processoId: processo.id,
+        numeroProcesso: processo.numeroProcesso,
+        tribunalCodigo: tribunal?.codigo,
+        urls: urlsNormalizadas,
+        forceRefresh: forceRefresh === true,
+        onlyMainContent: typeof onlyMainContent === 'boolean' ? onlyMainContent : undefined,
+        requestedBy: requestedBy || 'api',
+        correlationId,
+      },
+    });
+
+    const queueJob = await agendarFirecrawlEnrichment({
+      processoId: processo.id,
+      numeroProcesso: processo.numeroProcesso,
+      tribunalCodigo: tribunal?.codigo,
+      urls: urlsNormalizadas,
+      forceRefresh: forceRefresh === true,
+      onlyMainContent: typeof onlyMainContent === 'boolean' ? onlyMainContent : undefined,
+      requestedBy: requestedBy || 'api',
+      correlationId,
+    });
+
+    await auditJob.update({
+      status: 'PROCESSANDO',
+      startedAt: new Date(),
+      payload: {
+        ...(auditJob.payload ?? {}),
+        queueJobId: String(queueJob.id),
+      },
+    });
+
+    res.status(202).json({
+      sucesso: true,
+      status: 'queued',
+      processoId: processo.id,
+      numeroProcesso: processo.numeroProcesso,
+      jobId: String(queueJob.id),
+      auditJobId: auditJob.id,
+      urls: urlsNormalizadas,
+    });
+  } catch (error) {
+    if (auditJob) {
+      await auditJob.update({
+        status: 'FALHO',
+        erro: (error as Error).message,
+        completedAt: new Date(),
+      });
+    }
+
+    logRouteError(req, 'POST /processos/:id/enriquecimento/firecrawl', error);
+    res.status(500).json({ erro: { codigo: 'FIRECRAWL_ENRICHMENT_ERROR', mensagem: 'Erro ao agendar enriquecimento Firecrawl.' } });
+  }
+});
+
 router.post('/processos', async (req: Request, res: Response) => {
   try {
     const { numeroProcesso, tribunalId, advogadoId, classe, assunto } = req.body;
@@ -339,7 +535,7 @@ router.post('/processos', async (req: Request, res: Response) => {
     await Monitoramento.create({
       advogadoId,
       processoId: processo.id,
-      intervaloMinutos: 60,
+      intervaloMinutos: DEFAULT_PROCESS_MONITORING_INTERVAL_MINUTES,
       ativo: true,
     });
     
@@ -460,7 +656,7 @@ router.get('/monitoramentos', async (req: Request, res: Response) => {
 
 router.post('/processos/:id/monitorar', async (req: Request, res: Response) => {
   try {
-    const { intervaloMinutos = 60 } = req.body;
+    const intervaloMinutos = normalizeProcessMonitoringInterval(req.body?.intervaloMinutos);
     
     const processo = await Processo.findByPk(req.params.id);
     if (!processo) {
@@ -577,7 +773,7 @@ router.post('/tribunais/:codigo/buscar', async (req: Request, res: Response) => 
 router.post('/tribunais/:codigo/buscar-oab', async (req: Request, res: Response) => {
   try {
     const { codigo } = req.params;
-    const { oab, nome, advogadoId, forceRefresh, limiteProcessos } = req.body;
+    const { oab, nome, advogadoId, forceRefresh, limiteProcessos, onlyMissing } = req.body;
 
     if (!oab) {
       return res.status(400).json({
@@ -602,19 +798,126 @@ router.post('/tribunais/:codigo/buscar-oab', async (req: Request, res: Response)
       nome,
       advogadoId,
       forceRefresh === true,
-      typeof limiteProcessos === 'number' ? limiteProcessos : undefined
+      typeof limiteProcessos === 'number' ? limiteProcessos : undefined,
+      onlyMissing === true
     );
+
+    const fontes = resultado.fontes || [];
+    const fonteBloqueante = fontes.find(fonte =>
+      ['requires-auth', 'captcha', 'blocked'].includes(fonte.status)
+    );
+    const status: BuscaOABStatus = resultado.processos.length > 0
+      ? 'success'
+      : ((fonteBloqueante?.status as BuscaOABStatus | undefined) || 'empty');
+    const acaoRequerida = buildAcaoRequerida(fonteBloqueante);
 
     res.json({
       sucesso: true,
+      status,
       totalEncontrados: resultado.processos.length,
       processos: resultado.processos,
       doCache: resultado.doCache,
       tempoMs: resultado.tempoMs,
+      fontes,
+      motivo: fonteBloqueante?.mensagem,
+      acaoRequerida,
     });
   } catch (error: any) {
     logger.error(`Erro ao buscar OAB: ${error.message}`);
     res.status(500).json({ erro: { codigo: 'SCRAPE_ERROR', mensagem: 'Erro ao buscar por OAB.' } });
+  }
+});
+
+router.post('/tribunais/:codigo/buscar-oab/async', async (req: Request, res: Response) => {
+  let auditJob: Job | undefined;
+
+  try {
+    const { codigo } = req.params;
+    const { oab, nome, advogadoId, requestedBy } = req.body;
+    const tribunalCodigo = codigo.toUpperCase();
+
+    if (!oab || !advogadoId) {
+      return res.status(400).json({
+        erro: {
+          codigo: 'VALIDATION_ERROR',
+          mensagem: 'OAB e advogadoId são obrigatórios para busca assíncrona.',
+        },
+      });
+    }
+
+    const { registry } = await import('../tribunais');
+    const adapter = registry.get(tribunalCodigo);
+
+    if (!adapter) {
+      return res.status(400).json({
+        erro: { codigo: 'TRIBUNAL_NOT_SUPPORTED', mensagem: `Tribunal não suportado: ${codigo}` },
+      });
+    }
+
+    const advogado = await Advogado.findByPk(advogadoId);
+    if (!advogado) {
+      return res.status(404).json({
+        erro: { codigo: 'ADVOGADO_NAO_ENCONTRADO', mensagem: 'Advogado não encontrado.' },
+      });
+    }
+
+    const oabNormalizada = String(oab).toUpperCase().replace(/\s/g, '');
+    const correlationId = `${advogadoId}:${tribunalCodigo}:${Date.now()}`;
+
+    auditJob = await Job.create({
+      tipo: 'SCRAPE',
+      status: 'PENDENTE',
+      scheduledAt: new Date(),
+      tentativas: 0,
+      maxTentativas: 3,
+      payload: {
+        mode: 'oab_crawl',
+        advogadoId,
+        oab: oabNormalizada,
+        nome,
+        tribunalCodigo,
+        requestedBy: requestedBy || 'manual-oab-search',
+        correlationId,
+      },
+    });
+
+    const queueJob = await agendarOABCrawl({
+      advogadoId,
+      oab: oabNormalizada,
+      nome,
+      tribunais: [tribunalCodigo],
+      prioridade: 1,
+      requestedBy: requestedBy || 'manual-oab-search',
+      correlationId,
+    });
+
+    await auditJob.update({
+      status: 'PROCESSANDO',
+      startedAt: new Date(),
+      payload: {
+        ...(auditJob.payload ?? {}),
+        queueJobId: String(queueJob.id),
+      },
+    });
+
+    res.status(202).json({
+      sucesso: true,
+      status: 'queued',
+      jobId: auditJob.id,
+      queueJobId: String(queueJob.id),
+      mensagem: 'Busca por OAB agendada. Os processos serão salvos em background.',
+    });
+  } catch (error: any) {
+    if (auditJob) {
+      await auditJob.update({
+        status: 'FALHO',
+        erro: error.message,
+        completedAt: new Date(),
+      });
+    }
+
+    logRouteError(req, 'POST /tribunais/:codigo/buscar-oab/async', error);
+    res.status(500).json({ erro: { codigo: 'OAB_ASYNC_ERROR', mensagem: 'Erro ao agendar busca por OAB.' } });
   }
 });
 

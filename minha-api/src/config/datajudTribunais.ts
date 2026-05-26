@@ -1,6 +1,6 @@
-import { DATAJUD_TRIBUNAIS } from '../tribunais/DataJudAdapter';
+import { DATAJUD_TRIBUNAIS } from './datajudSiglas';
 
-export type TribunalTipo = 'TJ' | 'STJ' | 'STF' | 'TRT' | 'TRF' | 'TSE' | 'STM';
+export type TribunalTipo = 'TJ' | 'STJ' | 'STF' | 'TRT' | 'TRF' | 'TSE' | 'TRE' | 'STM' | 'TJM';
 
 export interface TribunalSeedConfig {
   codigo: string;
@@ -41,6 +41,42 @@ const TJ_NOMES: Record<string, string> = {
   TJTO: 'Tribunal de Justiça do Tocantins',
 };
 
+const UF_NOMES: Record<string, string> = {
+  AC: 'Acre',
+  AL: 'Alagoas',
+  AM: 'Amazonas',
+  AP: 'Amapá',
+  BA: 'Bahia',
+  CE: 'Ceará',
+  DF: 'Distrito Federal',
+  ES: 'Espírito Santo',
+  GO: 'Goiás',
+  MA: 'Maranhão',
+  MG: 'Minas Gerais',
+  MS: 'Mato Grosso do Sul',
+  MT: 'Mato Grosso',
+  PA: 'Pará',
+  PB: 'Paraíba',
+  PE: 'Pernambuco',
+  PI: 'Piauí',
+  PR: 'Paraná',
+  RJ: 'Rio de Janeiro',
+  RN: 'Rio Grande do Norte',
+  RO: 'Rondônia',
+  RR: 'Roraima',
+  RS: 'Rio Grande do Sul',
+  SC: 'Santa Catarina',
+  SE: 'Sergipe',
+  SP: 'São Paulo',
+  TO: 'Tocantins',
+};
+
+const TJM_NOMES: Record<string, string> = {
+  TJMMG: 'Tribunal de Justiça Militar de Minas Gerais',
+  TJMRS: 'Tribunal de Justiça Militar do Rio Grande do Sul',
+  TJMSP: 'Tribunal de Justiça Militar do Estado de São Paulo',
+};
+
 function ordinal(value: number): string {
   return `${value}ª`;
 }
@@ -50,6 +86,8 @@ export function inferTribunalTipo(codigo: string): TribunalTipo {
   if (codigo === 'STJ') return 'STJ';
   if (codigo === 'TSE') return 'TSE';
   if (codigo === 'STM') return 'STM';
+  if (codigo.startsWith('TRE')) return 'TRE';
+  if (codigo.startsWith('TJM')) return 'TJM';
   if (codigo === 'TST' || codigo.startsWith('TRT')) return 'TRT';
   if (codigo.startsWith('TRF')) return 'TRF';
   return 'TJ';
@@ -62,6 +100,10 @@ export function nomeTribunal(codigo: string): string {
   if (codigo === 'TST') return 'Tribunal Superior do Trabalho';
   if (codigo === 'TSE') return 'Tribunal Superior Eleitoral';
   if (codigo === 'STM') return 'Superior Tribunal Militar';
+  if (TJM_NOMES[codigo]) return TJM_NOMES[codigo];
+
+  const tre = codigo.match(/^TRE([A-Z]{2})$/);
+  if (tre) return `Tribunal Regional Eleitoral do ${UF_NOMES[tre[1]] || tre[1]}`;
 
   const trf = codigo.match(/^TRF(\d+)$/);
   if (trf) return `Tribunal Regional Federal da ${ordinal(Number(trf[1]))} Região`;

@@ -204,11 +204,43 @@ export const processoService = {
     return data;
   },
 
-  searchByOAB: async (tribunalCodigo: string, params: { oab: string; nome?: string; advogadoId?: string }) => {
+  searchByOAB: async (
+    tribunalCodigo: string,
+    params: {
+      oab: string;
+      nome?: string;
+      advogadoId?: string;
+      forceRefresh?: boolean;
+      limiteProcessos?: number;
+      onlyMissing?: boolean;
+    }
+  ) => {
     const { data } = await api.post<{ processos: any[]; totalEncontrados: number }>(
       `/tribunais/${tribunalCodigo}/buscar-oab`,
       params,
       { timeout: LONG_OPERATION_TIMEOUT_MS }
+    );
+    return data;
+  },
+
+  searchByOABAsync: async (
+    tribunalCodigo: string,
+    params: {
+      oab: string;
+      nome?: string;
+      advogadoId: string;
+    }
+  ) => {
+    const { data } = await api.post<{
+      sucesso: boolean;
+      status: 'queued';
+      jobId: string;
+      queueJobId: string;
+      mensagem: string;
+    }>(
+      `/tribunais/${tribunalCodigo}/buscar-oab/async`,
+      params,
+      { timeout: 30000 }
     );
     return data;
   },

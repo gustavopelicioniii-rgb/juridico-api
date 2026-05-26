@@ -179,7 +179,7 @@ export const up = async ({ context }: { context: QueryInterface }) => {
         onUpdate: 'CASCADE',
         onDelete: 'CASCADE',
       },
-      intervalo_minutos: { type: DataTypes.INTEGER, defaultValue: 60 },
+      intervalo_minutos: { type: DataTypes.INTEGER, defaultValue: 1440 },
       ativo: { type: DataTypes.BOOLEAN, defaultValue: true },
       ultimo_poll: { type: DataTypes.DATE, allowNull: true },
       created_at: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },

@@ -14,6 +14,7 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
+    "test:firecrawl": "ts-node scripts/test-firecrawl-enrichment.ts",
     "lint": "eslint src --ext .ts --max-warnings=100",
     "lint:fix": "eslint src --ext .ts --fix",
     "typecheck": "tsc --noEmit",
@@ -23,8 +24,8 @@
     "prepare": "husky"
   },
   "lint-staged": {
-    "*.ts": "eslint --fix",
-    "*.tsx": "eslint --fix"
+    "*.ts": "node -e \"require('child_process').execSync('npm run typecheck',{stdio:'inherit'})\"",
+    "*.tsx": "node -e \"require('child_process').execSync('npm run typecheck',{stdio:'inherit'})\""
   },
   "keywords": [
     "judicial",

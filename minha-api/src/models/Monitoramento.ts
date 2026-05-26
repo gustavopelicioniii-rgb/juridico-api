@@ -1,5 +1,6 @@
 import { DataTypes, Model, Optional } from 'sequelize';
 import { sequelize } from '../config/database';
+import { DEFAULT_PROCESS_MONITORING_INTERVAL_MINUTES } from '../config/monitoring';
 
 interface MonitoramentoAttributes {
   id: string;
@@ -52,7 +53,7 @@ Monitoramento.init(
     },
     intervaloMinutos: {
       type: DataTypes.INTEGER,
-      defaultValue: 60,
+      defaultValue: DEFAULT_PROCESS_MONITORING_INTERVAL_MINUTES,
       field: 'intervalo_minutos',
     },
     ativo: {

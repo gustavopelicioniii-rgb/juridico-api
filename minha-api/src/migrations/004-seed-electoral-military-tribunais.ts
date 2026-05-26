@@ -7,14 +7,16 @@ export const up = async ({ context }: { context: QueryInterface }) => {
   const dialect = sequelize.getDialect();
 
   if (dialect === 'postgres') {
-    await sequelize.query("ALTER TYPE \"enum_tribunais_tipo\" ADD VALUE IF NOT EXISTS 'TSE'");
     await sequelize.query("ALTER TYPE \"enum_tribunais_tipo\" ADD VALUE IF NOT EXISTS 'TRE'");
-    await sequelize.query("ALTER TYPE \"enum_tribunais_tipo\" ADD VALUE IF NOT EXISTS 'STM'");
     await sequelize.query("ALTER TYPE \"enum_tribunais_tipo\" ADD VALUE IF NOT EXISTS 'TJM'");
   }
 
   const now = new Date();
-  for (const tribunal of listarTribunaisDataJud()) {
+  const novosTribunais = listarTribunaisDataJud().filter(tribunal =>
+    tribunal.codigo.startsWith('TRE') || tribunal.codigo.startsWith('TJM')
+  );
+
+  for (const tribunal of novosTribunais) {
     if (dialect === 'postgres') {
       await sequelize.query(
         `INSERT INTO tribunais
@@ -66,5 +68,5 @@ export const up = async ({ context }: { context: QueryInterface }) => {
 };
 
 export const down = async () => {
-  // Intencionalmente sem remoção: estes registros são seeds de referência nacional.
+  // Seeds nacionais não são removidos automaticamente.
 };

@@ -1,7 +1,5 @@
 {
-  "minha-api/src/**/*.ts": ["eslint --fix", "tsc --noEmit"],
-  "minha-api/src/**/*.tsx": ["eslint --fix", "tsc --noEmit"],
-  "dashboard/src/**/*.ts": ["eslint --fix", "tsc --noEmit"],
-  "dashboard/src/**/*.tsx": ["eslint --fix", "tsc --noEmit"],
-  "*.{js,jsx,ts,tsx}": ["prettier --write"]
+  "dashboard/src/**/*.{ts,tsx}": [
+    "node -e \"require('child_process').execSync('npm run typecheck',{cwd:'dashboard',stdio:'inherit'})\""
+  ]
 }

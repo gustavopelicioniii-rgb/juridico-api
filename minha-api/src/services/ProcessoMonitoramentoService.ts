@@ -88,13 +88,12 @@ class ProcessoMonitoramentoService {
     }
 
     logger.info(`[Monitoramento] Iniciando com intervalo de ${intervaloMs}ms`);
+    this.status.rodando = true;
     this.verificarTodos();
 
     this.intervalId = setInterval(() => {
       this.verificarTodos();
     }, intervaloMs);
-
-    this.status.rodando = true;
   }
 
   parar(): void {

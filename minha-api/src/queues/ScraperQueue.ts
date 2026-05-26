@@ -6,11 +6,15 @@
 import Bull, { Queue, Job } from 'bull';
 import { registry } from '../tribunais';
 import TribunalService from '../services/TribunalService';
+import FirecrawlEnrichmentService from '../services/FirecrawlEnrichmentService';
 import logger from '../config/logger';
 import ProcessoMonitoramentoService from '../services/ProcessoMonitoramentoService';
 import Monitoramento from '../models/Monitoramento';
 import Processo from '../models/Processo';
+import Notification from '../models/Notification';
 import JobModel from '../models/Job';
+import notificationService from '../websocket/NotificationService';
+import { DEFAULT_PROCESS_MONITORING_INTERVAL_MINUTES } from '../config/monitoring';
 // TribunalDerivacaoService removed - stub functions
 const derivarTribunaisPorOAB = (_oab: string): string[] => [];
 
@@ -18,11 +22,12 @@ const derivarTribunaisPorOAB = (_oab: string): string[] => [];
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 
 export interface ScrapeJobData {
-  tipo?: 'PROCESSO' | 'INITIAL_OAB_CRAWL';
+  tipo?: 'PROCESSO' | 'INITIAL_OAB_CRAWL' | 'OAB_CRAWL' | 'FIRECRAWL_AUX';
   numeroProcesso: string;
   tribunalCodigo: string;
   advogadoId?: string;
   processoId?: string; // Se já existir no banco
+  monitoramentoId?: string;
   prioridade?: number;
   oab?: string;
   nome?: string;
@@ -30,6 +35,9 @@ export interface ScrapeJobData {
   source?: 'admin-create' | 'self-register';
   correlationId?: string;
   tribunais?: string[];
+  urls?: string[];
+  forceRefresh?: boolean;
+  onlyMainContent?: boolean;
 }
 
 export interface ScrapeJobResult {
@@ -37,9 +45,85 @@ export interface ScrapeJobResult {
   processoId?: string;
   novasMovimentacoes?: number;
   erro?: string;
-  tipo?: 'PROCESSO' | 'INITIAL_OAB_CRAWL';
+  tipo?: 'PROCESSO' | 'INITIAL_OAB_CRAWL' | 'OAB_CRAWL' | 'FIRECRAWL_AUX';
   totalEncontrados?: number;
   totalSalvos?: number;
+  firecrawl?: {
+    totalUrls: number;
+    totalOk: number;
+    updatedAt: string;
+  };
+}
+
+async function registrarNotificacaoMovimentacao(
+  processoId: string,
+  numeroProcesso: string,
+  advogadoId: string,
+  quantidade: number
+): Promise<void> {
+  const mensagem = `${quantidade} nova${quantidade === 1 ? '' : 's'} movimentação${quantidade === 1 ? '' : 'ões'} no processo ${numeroProcesso}`;
+
+  await Notification.create({
+    advogadoId,
+    processoId,
+    tipo: 'NOVA_MOVIMENTACAO',
+    mensagem,
+    dados: {
+      numeroProcesso,
+      novasMovimentacoes: quantidade,
+    },
+  });
+
+  notificationService.novaMovimentacao(processoId, numeroProcesso, advogadoId, quantidade);
+}
+
+async function registrarErroScraping(job: Job<ScrapeJobData>, message: string): Promise<void> {
+  const { processoId, numeroProcesso, advogadoId, monitoramentoId } = job.data;
+
+  if (monitoramentoId) {
+    await Monitoramento.update(
+      { ultimoPoll: new Date(0) },
+      { where: { id: monitoramentoId } }
+    );
+  }
+
+  if (!processoId || !advogadoId) return;
+
+  await Notification.create({
+    advogadoId,
+    processoId,
+    tipo: 'ERRO_SCRAPING',
+    mensagem: `Falha ao atualizar o processo ${numeroProcesso}`,
+    dados: { numeroProcesso, erro: message },
+  });
+
+  notificationService.erroScraping(processoId, numeroProcesso, advogadoId, message);
+}
+
+async function atualizarJobAuditoriaFila(
+  mode: string,
+  queueJobId: string,
+  data: Partial<{
+    status: 'PENDENTE' | 'PROCESSANDO' | 'CONCLUIDO' | 'FALHO';
+    erro?: string;
+    completedAt?: Date;
+    tentativas?: number;
+  }>
+): Promise<void> {
+  const jobs = await JobModel.findAll({
+    where: { tipo: 'SCRAPE' },
+    order: [['createdAt', 'DESC']],
+    limit: 500,
+  });
+
+  const auditJob = jobs.find((candidate) => {
+    const payload = (candidate.payload ?? {}) as Record<string, unknown>;
+    return payload.mode === mode && payload.queueJobId === queueJobId;
+  });
+
+  if (auditJob) {
+    await auditJob.update(data);
+  }
 }
 
 // Criação da fila
@@ -71,11 +155,21 @@ scrapeQueue.on('failed', (job, err) => {
   });
 
   const { tipo } = job.data || {};
+  const maxAttempts = job.opts.attempts || 1;
+  if (tipo !== 'INITIAL_OAB_CRAWL' && job.attemptsMade >= maxAttempts) {
+    void registrarErroScraping(job, err.message).catch((updateError) => {
+      logger.warn('Falha ao registrar erro de scraping', {
+        queueJobId: job.id,
+        error: (updateError as Error).message,
+      });
+    });
+  }
+
   if (tipo === 'INITIAL_OAB_CRAWL') {
     void JobModel.findAll({
       where: { tipo: 'SCRAPE' },
       order: [['createdAt', 'DESC']],
-      limit: 50,
+      limit: 500,
     }).then((jobs) => {
       const auditJob = jobs.find((candidate) => {
         const payload = (candidate.payload ?? {}) as Record<string, unknown>;
@@ -97,6 +191,34 @@ scrapeQueue.on('failed', (job, err) => {
       });
     });
   }
+
+  if (tipo === 'OAB_CRAWL') {
+    void atualizarJobAuditoriaFila('oab_crawl', String(job.id), {
+      status: 'FALHO',
+      erro: err.message,
+      completedAt: new Date(),
+      tentativas: job.attemptsMade,
+    }).catch((updateError) => {
+      logger.warn('Falha ao atualizar status de auditoria OAB (failed)', {
+        queueJobId: job.id,
+        error: (updateError as Error).message,
+      });
+    });
+  }
+
+  if (tipo === 'FIRECRAWL_AUX') {
+    void atualizarJobAuditoriaFila('firecrawl_aux', String(job.id), {
+      status: 'FALHO',
+      erro: err.message,
+      completedAt: new Date(),
+      tentativas: job.attemptsMade,
+    }).catch((updateError) => {
+      logger.warn('Falha ao atualizar status de auditoria Firecrawl (failed)', {
+        queueJobId: job.id,
+        error: (updateError as Error).message,
+      });
+    });
+  }
 });
 
 scrapeQueue.on('completed', (job, result) => {
@@ -107,7 +229,7 @@ scrapeQueue.on('completed', (job, result) => {
     void JobModel.findAll({
       where: { tipo: 'SCRAPE' },
       order: [['createdAt', 'DESC']],
-      limit: 50,
+      limit: 500,
     }).then((jobs) => {
       const auditJob = jobs.find((candidate) => {
         const payload = (candidate.payload ?? {}) as Record<string, unknown>;
@@ -129,6 +251,34 @@ scrapeQueue.on('completed', (job, result) => {
       });
     });
   }
+
+  if (tipo === 'OAB_CRAWL') {
+    void atualizarJobAuditoriaFila('oab_crawl', String(job.id), {
+      status: (result as ScrapeJobResult)?.sucesso ? 'CONCLUIDO' : 'FALHO',
+      erro: (result as ScrapeJobResult)?.erro,
+      completedAt: new Date(),
+      tentativas: job.attemptsMade,
+    }).catch((updateError) => {
+      logger.warn('Falha ao atualizar status de auditoria OAB (completed)', {
+        queueJobId: job.id,
+        error: (updateError as Error).message,
+      });
+    });
+  }
+
+  if (tipo === 'FIRECRAWL_AUX') {
+    void atualizarJobAuditoriaFila('firecrawl_aux', String(job.id), {
+      status: (result as ScrapeJobResult)?.sucesso ? 'CONCLUIDO' : 'FALHO',
+      erro: (result as ScrapeJobResult)?.erro,
+      completedAt: new Date(),
+      tentativas: job.attemptsMade,
+    }).catch((updateError) => {
+      logger.warn('Falha ao atualizar status de auditoria Firecrawl (completed)', {
+        queueJobId: job.id,
+        error: (updateError as Error).message,
+      });
+    });
+  }
 });
 
 /**
@@ -137,7 +287,13 @@ scrapeQueue.on('completed', (job, result) => {
 export async function agendarScraping(data: ScrapeJobData): Promise<Job<ScrapeJobData>> {
   const job = await scrapeQueue.add(data, {
     priority: data.prioridade || 2,
-    jobId: `${data.tribunalCodigo}-${data.numeroProcesso}`,
+    jobId: [
+      data.tribunalCodigo,
+      data.numeroProcesso,
+      data.tipo || 'PROCESSO',
+      data.monitoramentoId || data.processoId || 'manual',
+      Date.now(),
+    ].join('-'),
   });
   
   logger.info(`Scraping agendado: ${data.numeroProcesso} em ${data.tribunalCodigo}`, { jobId: job.id });
@@ -234,6 +390,95 @@ export async function agendarInitialOABCrawl(
   return job;
 }
 
+export async function agendarOABCrawl(data: {
+  advogadoId: string;
+  oab: string;
+  nome?: string;
+  tribunais: string[];
+  requestedBy?: string;
+  correlationId?: string;
+  prioridade?: number;
+}): Promise<Job<ScrapeJobData>> {
+  const oabNormalizada = data.oab.toUpperCase().replace(/\s/g, '');
+  const tribunaisAlvo = data.tribunais.map((codigo) => codigo.toUpperCase());
+
+  const job = await scrapeQueue.add({
+    tipo: 'OAB_CRAWL',
+    numeroProcesso: '__OAB_CRAWL__',
+    tribunalCodigo: '__MULTI__',
+    advogadoId: data.advogadoId,
+    oab: oabNormalizada,
+    nome: data.nome,
+    tribunais: tribunaisAlvo,
+    requestedBy: data.requestedBy,
+    correlationId: data.correlationId,
+  }, {
+    priority: data.prioridade || 1,
+    jobId: `oab-crawl-${data.advogadoId}-${oabNormalizada}-${tribunaisAlvo.join('-')}-${Date.now()}`,
+    removeOnComplete: false,
+    removeOnFail: false,
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 15000,
+    },
+  });
+
+  logger.info('Busca OAB assíncrona agendada', {
+    advogadoId: data.advogadoId,
+    oab: oabNormalizada,
+    tribunais: tribunaisAlvo,
+    correlationId: data.correlationId,
+    jobId: job.id,
+  });
+
+  return job;
+}
+
+export async function agendarFirecrawlEnrichment(data: {
+  processoId: string;
+  numeroProcesso: string;
+  tribunalCodigo?: string;
+  urls: string[];
+  forceRefresh?: boolean;
+  onlyMainContent?: boolean;
+  requestedBy?: string;
+  correlationId?: string;
+  prioridade?: number;
+}): Promise<Job<ScrapeJobData>> {
+  const job = await scrapeQueue.add({
+    tipo: 'FIRECRAWL_AUX',
+    numeroProcesso: data.numeroProcesso,
+    tribunalCodigo: data.tribunalCodigo || '__AUX__',
+    processoId: data.processoId,
+    urls: data.urls,
+    forceRefresh: data.forceRefresh,
+    onlyMainContent: data.onlyMainContent,
+    requestedBy: data.requestedBy,
+    correlationId: data.correlationId,
+  }, {
+    priority: data.prioridade || 3,
+    jobId: `firecrawl-aux-${data.processoId}-${Date.now()}`,
+    removeOnComplete: false,
+    removeOnFail: false,
+    attempts: 2,
+    backoff: {
+      type: 'exponential',
+      delay: 15000,
+    },
+  });
+
+  logger.info('Enriquecimento Firecrawl agendado', {
+    processoId: data.processoId,
+    numeroProcesso: data.numeroProcesso,
+    totalUrls: data.urls.length,
+    correlationId: data.correlationId,
+    jobId: job.id,
+  });
+
+  return job;
+}
+
 async function ensureMonitoramentoParaProcesso(processoId: string, advogadoId?: string): Promise<void> {
   if (!advogadoId) {
     return;
@@ -250,8 +495,9 @@ async function ensureMonitoramentoParaProcesso(processoId: string, advogadoId?: 
   await Monitoramento.create({
     advogadoId,
     processoId,
-    intervaloMinutos: 60,
+    intervaloMinutos: DEFAULT_PROCESS_MONITORING_INTERVAL_MINUTES,
     ativo: true,
+    ultimoPoll: new Date(),
   });
 }
 
@@ -357,7 +603,13 @@ export async function agendarScrapingBatch(
       data: item,
       opts: {
         priority: item.prioridade || 2,
-        jobId: `${item.tribunalCodigo}-${item.numeroProcesso}-${item.tipo || 'PROCESSO'}`,
+        jobId: [
+          item.tribunalCodigo,
+          item.numeroProcesso,
+          item.tipo || 'PROCESSO',
+          item.monitoramentoId || item.processoId || 'batch',
+          Date.now(),
+        ].join('-'),
       },
     }))
   );
@@ -371,13 +623,42 @@ export async function agendarScrapingBatch(
  * Processador de jobs de scraping
  */
 scrapeQueue.process(async (job: Job<ScrapeJobData>): Promise<ScrapeJobResult> => {
-  const { tipo = 'PROCESSO', numeroProcesso, tribunalCodigo, advogadoId, correlationId } = job.data;
+  const { tipo = 'PROCESSO', numeroProcesso, tribunalCodigo, advogadoId, processoId, correlationId, monitoramentoId } = job.data;
   
   logger.info(`Processando scraping: ${tipo}`, { jobId: job.id, correlationId });
   
   try {
     if (tipo === 'INITIAL_OAB_CRAWL') {
       return processInitialOABCrawl(job);
+    }
+
+    if (tipo === 'OAB_CRAWL') {
+      const result = await processInitialOABCrawl(job);
+      return { ...result, tipo: 'OAB_CRAWL' };
+    }
+
+    if (tipo === 'FIRECRAWL_AUX') {
+      if (!processoId) {
+        throw new Error('Job FIRECRAWL_AUX inválido: processoId é obrigatório');
+      }
+
+      const enrichment = await FirecrawlEnrichmentService.enrichProcesso({
+        processoId,
+        urls: job.data.urls || [],
+        forceRefresh: job.data.forceRefresh,
+        onlyMainContent: job.data.onlyMainContent,
+      });
+
+      return {
+        sucesso: enrichment.results.some(result => result.ok),
+        tipo: 'FIRECRAWL_AUX',
+        processoId,
+        firecrawl: {
+          totalUrls: enrichment.results.length,
+          totalOk: enrichment.results.filter(result => result.ok).length,
+          updatedAt: enrichment.updatedAt,
+        },
+      };
     }
 
     // Verifica se o adapter existe
@@ -392,6 +673,30 @@ scrapeQueue.process(async (job: Job<ScrapeJobData>): Promise<ScrapeJobResult> =>
       tribunalCodigo,
       advogadoId
     );
+
+    if (monitoramentoId) {
+      await Monitoramento.update(
+        { ultimoPoll: new Date() },
+        { where: { id: monitoramentoId } }
+      );
+    }
+
+    if (!resultado.ehNovo && advogadoId && resultado.novasMovimentacoes > 0) {
+      try {
+        await registrarNotificacaoMovimentacao(
+          resultado.processo.id,
+          resultado.processo.numeroProcesso,
+          advogadoId,
+          resultado.novasMovimentacoes
+        );
+      } catch (notificationError) {
+        logger.warn('Movimentações novas salvas, mas a notificação falhou', {
+          processoId: resultado.processo.id,
+          novasMovimentacoes: resultado.novasMovimentacoes,
+          error: (notificationError as Error).message,
+        });
+      }
+    }
     
     return {
       sucesso: true,
@@ -402,11 +707,7 @@ scrapeQueue.process(async (job: Job<ScrapeJobData>): Promise<ScrapeJobResult> =>
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Erro desconhecido';
     logger.error(`Erro no scraping de ${numeroProcesso}:`, error);
-    
-    return {
-      sucesso: false,
-      erro: message,
-    };
+    throw error instanceof Error ? error : new Error(message);
   }
 });
 
