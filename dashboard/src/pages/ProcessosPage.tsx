@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Search, Plus, RefreshCw, Eye, Trash2, X, Loader2, FileText } from 'lucide-react';
+import { isAxiosError } from 'axios';
 import { processoService, tribunalService, advogadoService } from '../services/api';
-import type { Processo } from '../types/api';
+import type { Advogado, Processo } from '../types/api';
 
 export default function ProcessosPage() {
   const [processos, setProcessos] = useState<Processo[]>([]);
@@ -11,6 +12,7 @@ export default function ProcessosPage() {
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterTribunal, setFilterTribunal] = useState<string>('all');
   const [isLoading, setIsLoading] = useState(true);
+  const [refreshingProcessoId, setRefreshingProcessoId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Modal state
@@ -53,12 +55,27 @@ export default function ProcessosPage() {
     }
   };
 
+  const getProcessoTribunalCodigo = (processo: Processo) =>
+    processo.tribunalCodigo ||
+    processo.tribunal?.codigo ||
+    tribunais.find((tribunal) => tribunal.id === processo.tribunalId)?.codigo;
+
+  const getProcessoTribunalNome = (processo: Processo) =>
+    processo.tribunalNome ||
+    processo.tribunal?.nome ||
+    processo.tribunal?.codigo ||
+    processo.tribunalCodigo;
+
+  const getProcessoAdvogado = (processo: Processo): Pick<Advogado, 'id' | 'oab' | 'nome'> | undefined =>
+    processo.advogado ||
+    advogados.find((advogado) => advogado.id === processo.advogadoId);
+
   const filteredProcessos = processos.filter((p) => {
     const matchesSearch =
       (p.numeroProcesso || '').includes(search) ||
       (p.classe || '').toLowerCase().includes(search.toLowerCase());
     const matchesStatus = filterStatus === 'all' || p.status === filterStatus;
-    const matchesTribunal = filterTribunal === 'all' || p.tribunalCodigo === filterTribunal;
+    const matchesTribunal = filterTribunal === 'all' || getProcessoTribunalCodigo(p) === filterTribunal;
     return matchesSearch && matchesStatus && matchesTribunal;
   });
 
@@ -110,14 +127,39 @@ export default function ProcessosPage() {
   };
 
   const handleRefresh = async (processo: Processo) => {
-    const tribunalCodigo = processo.tribunalCodigo || window.prompt('Código do tribunal para refresh:');
+    const tribunalCodigo = getProcessoTribunalCodigo(processo) || window.prompt('Código do tribunal para refresh:')?.trim().toUpperCase();
     if (!tribunalCodigo) return;
+
+    const advogado = getProcessoAdvogado(processo);
+    const oab = advogado?.oab || window.prompt('OAB para buscar processos ausentes:')?.trim().toUpperCase();
+    if (!oab) return;
+
     try {
-      await processoService.refresh(tribunalCodigo, processo.numeroProcesso || processo.numero || '');
-      fetchData();
+      setRefreshingProcessoId(processo.id);
+      const resultado = await processoService.searchByOAB(tribunalCodigo, {
+        oab,
+        nome: advogado?.nome,
+        advogadoId: advogado?.id || processo.advogadoId,
+        forceRefresh: true,
+        onlyMissing: true,
+      });
+      await fetchData();
+
+      const total = resultado.totalEncontrados ?? resultado.processos?.length ?? 0;
+      alert(
+        total > 0
+          ? `${total} processo(s) novo(s) encontrado(s) e salvo(s).`
+          : 'Nenhum processo novo encontrado.'
+      );
     } catch (err) {
-      alert('Erro ao atualizar processo');
       console.error(err);
+      if (isAxiosError(err) && (err.code === 'ECONNABORTED' || err.message.includes('timeout'))) {
+        alert('A busca passou do tempo limite (5 minutos). A API pode ainda estar processando - aguarde e tente de novo.');
+      } else {
+        alert('Erro ao buscar processos ausentes');
+      }
+    } finally {
+      setRefreshingProcessoId(null);
     }
   };
 
@@ -217,7 +259,7 @@ export default function ProcessosPage() {
                   </td>
                   <td className="px-6 py-4">
                     <span className="px-2 py-1 rounded-lg text-xs font-medium bg-dark-100 text-slate-300">
-                      {processo.tribunalNome || processo.tribunalCodigo || '—'}
+                      {getProcessoTribunalNome(processo) || '—'}
                     </span>
                   </td>
                   <td className="px-6 py-4">
@@ -246,10 +288,11 @@ export default function ProcessosPage() {
                       </button>
                       <button
                         onClick={() => handleRefresh(processo)}
-                        className="p-2 rounded-lg text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors"
+                        disabled={refreshingProcessoId === processo.id}
+                        className="p-2 rounded-lg text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors disabled:opacity-50 disabled:cursor-wait"
                         title="Atualizar"
                       >
-                        <RefreshCw className="w-4 h-4" />
+                        <RefreshCw className={`w-4 h-4 ${refreshingProcessoId === processo.id ? 'animate-spin' : ''}`} />
                       </button>
                       <button
                         onClick={() => handleDelete(processo.id)}
@@ -391,7 +434,7 @@ export default function ProcessosPage() {
                 </div>
                 <div>
                   <p className="text-xs text-slate-500 uppercase">Tribunal</p>
-                  <p className="text-slate-200">{selectedProcesso.tribunalNome || selectedProcesso.tribunalCodigo || '—'}</p>
+                  <p className="text-slate-200">{getProcessoTribunalNome(selectedProcesso) || '—'}</p>
                 </div>
                 <div>
                   <p className="text-xs text-slate-500 uppercase">Classe</p>

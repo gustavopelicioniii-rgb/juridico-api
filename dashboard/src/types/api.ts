@@ -23,8 +23,11 @@ export interface Processo {
   /** Campo used in legacy mocks / frontend */
   numero?: string;
   tribunalId?: string;
+  advogadoId?: string;
   tribunalNome?: string;
   tribunalCodigo?: string;
+  tribunal?: Pick<Tribunal, 'id' | 'codigo' | 'nome'>;
+  advogado?: Pick<Advogado, 'id' | 'oab' | 'nome'>;
   tipo?: string;
   area?: string;
   classe?: string;

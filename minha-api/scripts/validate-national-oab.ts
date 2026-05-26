@@ -17,13 +17,15 @@ import fs from 'fs/promises';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import jwt from 'jsonwebtoken';
-import { DATAJUD_TRIBUNAIS } from '../src/tribunais/DataJudAdapter';
+import { DATAJUD_TRIBUNAIS } from '../src/config/datajudSiglas';
+import { listarTribunalSourceMatrix } from '../src/config/tribunalSources';
 
 type Coverage =
   | 'ok-com-processos'
   | 'ok-vazio'
   | 'limitado-por-dados-publicos'
   | 'captcha/autenticacao'
+  | 'requer-credencial'
   | 'erro-sistema';
 
 interface Sample {
@@ -34,6 +36,7 @@ interface Sample {
   uf?: string;
   source: string;
   expected: 'positive' | 'empty-ok';
+  expectedMinProcesses?: number;
 }
 
 interface SearchResult {
@@ -55,6 +58,7 @@ interface SearchResult {
   tempoMs: number;
   coverage: Coverage;
   error?: string;
+  fontes?: unknown[];
 }
 
 interface HealthResult {
@@ -77,13 +81,14 @@ interface DataJudHit {
 }
 
 const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:3001/api/v1';
-const SAMPLE_SIZE = Number(process.env.NATIONAL_OAB_SAMPLE_SIZE || 50);
+const REQUESTED_SAMPLE_SIZE = Number(process.env.NATIONAL_OAB_SAMPLE_SIZE || 0);
 const LIMIT_PER_OAB = Number(process.env.VALIDATION_LIMIT_PER_OAB || 1);
 const DATAJUD_TIMEOUT_MS = Number(process.env.VALIDATION_DATAJUD_TIMEOUT_MS || 18_000);
 const REPORT_DIR = path.resolve(__dirname, '..', 'validation-reports');
 const RUN_ID = new Date().toISOString().replace(/\D/g, '').slice(0, 12);
 
 const tribunalCodes = Object.keys(DATAJUD_TRIBUNAIS).sort();
+const SAMPLE_SIZE = Math.max(REQUESTED_SAMPLE_SIZE, tribunalCodes.length);
 
 function authHeaders(): Record<string, string> {
   const secret = process.env.JWT_SECRET;
@@ -122,6 +127,9 @@ function clientOabFor(index: number, sample: Sample): string {
 function classifyResult(result: SearchResult): Coverage {
   if (!result.success) return 'erro-sistema';
   if (result.returned > 0) return 'ok-com-processos';
+  const sourceStatus = JSON.stringify(result.fontes || []);
+  if (/requires-auth|requires-login|requires-certificate/.test(sourceStatus)) return 'requer-credencial';
+  if (/captcha/.test(sourceStatus)) return 'captcha/autenticacao';
   return result.source.startsWith('datajud-sample') || result.source.startsWith('esaj')
     ? 'limitado-por-dados-publicos'
     : 'ok-vazio';
@@ -203,6 +211,27 @@ function buildFallbackSamples(existing: Sample[], capability: Record<string, str
   const samples = [...existing];
   const seen = new Set(samples.map(sampleKey));
 
+  for (const tribunal of listarTribunalSourceMatrix()) {
+    const positive = tribunal.strategies
+      .map(strategy => strategy.positiveSample)
+      .find(Boolean);
+    if (!positive) continue;
+    const sample: Sample = {
+      sampleId: randomUUID(),
+      tribunal: tribunal.codigo,
+      oab: positive.oab,
+      nome: positive.nome,
+      source: positive.source,
+      expected: 'positive',
+      expectedMinProcesses: positive.expectedMinProcesses,
+    };
+    const key = sampleKey(sample);
+    if (!seen.has(key)) {
+      samples.push(sample);
+      seen.add(key);
+    }
+  }
+
   const controls: Array<Omit<Sample, 'sampleId'>> = [
     { tribunal: 'TJSP', oab: '361329', nome: 'Sidney da Silva', uf: 'SP', source: 'esaj-tjsp-publico', expected: 'positive' },
     { tribunal: 'TJSP', oab: '999001', uf: 'SP', source: 'controle-vazio', expected: 'empty-ok' },
@@ -223,6 +252,21 @@ function buildFallbackSamples(existing: Sample[], capability: Record<string, str
     }
   }
 
+  const sampledTribunals = new Set(samples.map(sample => sample.tribunal));
+  for (const tribunal of tribunalCodes) {
+    if (sampledTribunals.has(tribunal)) continue;
+    const sample: Sample = {
+      sampleId: randomUUID(),
+      tribunal,
+      oab: String(880000 + samples.length),
+      source: `controle-cobertura-nacional-${capability[tribunal] || 'sem-classificacao'}`,
+      expected: 'empty-ok',
+    };
+    samples.push(sample);
+    sampledTribunals.add(tribunal);
+    seen.add(sampleKey(sample));
+  }
+
   let index = 0;
   while (samples.length < SAMPLE_SIZE) {
     const tribunal = tribunalCodes[index % tribunalCodes.length];
@@ -241,7 +285,7 @@ function buildFallbackSamples(existing: Sample[], capability: Record<string, str
     index += 1;
   }
 
-  return samples.slice(0, SAMPLE_SIZE);
+  return samples;
 }
 
 async function ensureValidationClient(index: number, sample: Sample): Promise<{ id: string; oab: string }> {
@@ -355,6 +399,7 @@ async function runSearch(index: number, sample: Sample): Promise<SearchResult> {
       withMovimentacoes: processos.filter((p: { movimentacoes?: unknown[] }) => Array.isArray(p.movimentacoes) && p.movimentacoes.length > 0).length,
       tempoMs: Number(data?.tempoMs || Date.now() - started),
       coverage: 'ok-vazio',
+      fontes: data?.fontes,
     };
     result.coverage = classifyResult(result);
     return result;
@@ -460,7 +505,14 @@ async function main() {
   }, null, 2));
 
   const systemFailures = results.filter(result => result.coverage === 'erro-sistema');
-  if (health.length !== tribunalCodes.length || samples.length < SAMPLE_SIZE || systemFailures.length > 0) {
+  const positiveFailures = results.filter(result => {
+    const sample = samples.find(item => item.sampleId === result.sampleId);
+    return sample?.expected === 'positive' && result.returned < (sample.expectedMinProcesses || 1);
+  });
+  if (positiveFailures.length > 0) {
+    console.error('Amostras positivas sem retorno:', positiveFailures.map(r => `${r.tribunal}:${r.oab}`).join(', '));
+  }
+  if (health.length !== tribunalCodes.length || samples.length < SAMPLE_SIZE || systemFailures.length > 0 || positiveFailures.length > 0) {
     process.exitCode = 1;
   }
 }
