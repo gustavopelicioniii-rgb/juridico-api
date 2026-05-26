@@ -162,8 +162,10 @@ export const advogadoService = {
     await api.delete(`/advogados/${id}`);
   },
 
-  getProcessos: async (id: string) => {
-    const { data } = await api.get<{ processos: any[] }>(`/advogados/${id}/processos`);
+  getProcessos: async (id: string, limite = 200) => {
+    const { data } = await api.get<{ processos: any[] }>(`/advogados/${id}/processos`, {
+      params: { limite },
+    });
     return data.processos;
   },
 };

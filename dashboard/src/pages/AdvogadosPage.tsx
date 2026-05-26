@@ -4,6 +4,9 @@ import { isAxiosError } from 'axios';
 import { advogadoService, processoService, jobService } from '../services/api';
 import type { Advogado, Processo } from '../types/api';
 
+const OAB_JOB_POLL_INTERVAL_MS = 3000;
+const OAB_PROCESS_REFRESH_ATTEMPTS = 2;
+
 export default function AdvogadosPage() {
   const [advogados, setAdvogados] = useState<Advogado[]>([]);
   const [search, setSearch] = useState('');
@@ -107,33 +110,64 @@ export default function AdvogadosPage() {
     }
   };
 
-  const openProcessosModal = async (advogado: Advogado) => {
-    setSelectedAdvogado(advogado);
-    setShowProcessosModal(true);
-    setProcessosLoading(true);
+  const refreshProcessosAdvogado = async (advogado: Advogado, showLoading = false) => {
+    if (showLoading) {
+      setProcessosLoading(true);
+    }
+
     try {
       const data = await advogadoService.getProcessos(advogado.id);
       setProcessos(data);
+      return data;
     } catch (err) {
       console.error('Erro ao carregar processos:', err);
-      setProcessos([]);
+      if (showLoading) {
+        setProcessos([]);
+      }
+      return processos;
     } finally {
-      setProcessosLoading(false);
+      if (showLoading) {
+        setProcessosLoading(false);
+      }
     }
+  };
+
+  const openProcessosModal = async (advogado: Advogado) => {
+    setSelectedAdvogado(advogado);
+    setShowProcessosModal(true);
+    await refreshProcessosAdvogado(advogado, true);
   };
 
   const waitForOABJob = async (jobId: string, advogado: Advogado) => {
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    let lastTotal = processos.length;
+    let attempt = 0;
 
-    for (let attempt = 0; attempt < 80; attempt++) {
-      await sleep(3000);
-      const job = await jobService.getById(jobId);
+    while (true) {
+      await sleep(OAB_JOB_POLL_INTERVAL_MS);
+      attempt++;
+
+      if (attempt % OAB_PROCESS_REFRESH_ATTEMPTS === 0) {
+        const data = await refreshProcessosAdvogado(advogado);
+        lastTotal = data.length;
+        setOnboardingMessage(
+          `Importando processos para ${advogado.nome}... ${lastTotal} processo(s) já disponível(is).`
+        );
+      }
+
+      let job;
+      try {
+        job = await jobService.getById(jobId);
+      } catch (err) {
+        console.warn('Falha temporária ao consultar job OAB:', err);
+        setOnboardingMessage(
+          `Importação ainda em andamento para ${advogado.nome}. A conexão oscilou, mas a lista será atualizada automaticamente.`
+        );
+        continue;
+      }
 
       if (job.status === 'CONCLUIDO' || job.status === 'COMPLETED') {
-        const data = await advogadoService.getProcessos(advogado.id);
-        if (selectedAdvogado?.id === advogado.id) {
-          setProcessos(data);
-        }
+        const data = await refreshProcessosAdvogado(advogado);
         setOnboardingMessage(
           `Busca concluída para ${advogado.nome}. ${data.length} processo(s) disponíveis para esta OAB.`
         );
@@ -146,14 +180,10 @@ export default function AdvogadosPage() {
 
       if (attempt === 0 || attempt % 5 === 0) {
         setOnboardingMessage(
-          `Busca por OAB em andamento para ${advogado.nome}. Você pode continuar usando o sistema.`
+          `Busca por OAB em andamento para ${advogado.nome}. ${lastTotal} processo(s) já disponível(is). Você pode continuar usando o sistema.`
         );
       }
     }
-
-    setOnboardingMessage(
-      `Busca por OAB ainda em processamento para ${advogado.nome}. Abra os processos novamente em alguns minutos.`
-    );
   };
 
   const handleBuscarProcessos = async (advogado: Advogado) => {
@@ -173,7 +203,7 @@ export default function AdvogadosPage() {
     } catch (err) {
       console.error('Erro ao buscar processos:', err);
       if (isAxiosError(err) && (err.code === 'ECONNABORTED' || err.message.includes('timeout'))) {
-        setOnboardingMessage('A busca foi agendada, mas a confirmação demorou. Verifique os processos em alguns minutos.');
+        setOnboardingMessage('A busca foi agendada e continuará em background. A lista será atualizada automaticamente quando os processos forem salvos.');
       } else {
         setOnboardingMessage(err instanceof Error ? err.message : 'Erro ao buscar processos no tribunal.');
       }
