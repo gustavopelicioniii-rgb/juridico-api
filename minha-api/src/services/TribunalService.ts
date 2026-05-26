@@ -59,6 +59,12 @@ function valorInteiro(value?: number): number | undefined {
   return Math.round(value);
 }
 
+function dataValida(value?: Date | string): Date | undefined {
+  if (!value) return undefined;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
 function limitarTexto(value: string | undefined, maxLength: number): string | undefined {
   if (!value) return undefined;
   return value.length > maxLength ? value.slice(0, maxLength) : value;
@@ -208,6 +214,87 @@ class TribunalService {
       ativo: true,
       ultimoPoll: new Date(),
     }, { transaction: t });
+  }
+
+  private async garantirMonitoramentoDiarioSemTransacao(
+    processoId: string,
+    advogadoId?: string
+  ): Promise<void> {
+    if (!advogadoId) return;
+
+    const existente = await Monitoramento.findOne({
+      where: { processoId, ativo: true },
+    });
+
+    if (existente) return;
+
+    await Monitoramento.create({
+      processoId,
+      advogadoId,
+      intervaloMinutos: DEFAULT_PROCESS_MONITORING_INTERVAL_MINUTES,
+      ativo: true,
+      ultimoPoll: new Date(),
+    });
+  }
+
+  private async salvarResumoProcessoOAB(
+    proc: ResultadoBusca['processos'][number],
+    tribunalCodigo: string,
+    advogadoId?: string
+  ): Promise<string> {
+    const tribunal = await Tribunal.findOne({ where: { codigo: tribunalCodigo } });
+    if (!tribunal) {
+      throw new Error(`Tribunal não encontrado no banco: ${tribunalCodigo}`);
+    }
+
+    const dadosResumo = {
+      tribunalId: tribunal.id,
+      advogadoId,
+      status: 'MONITORANDO' as const,
+      classe: proc.classe,
+      classeCodigo: proc.classeCodigo,
+      assunto: proc.assunto,
+      assuntoPrincipal: proc.assuntoPrincipal,
+      instancia: (proc.instancia || 'PRIMEIRA') as 'PRIMEIRA' | 'SEGUNDA' | 'SUPERIOR',
+      dataAjuizamento: dataValida(proc.dataAjuizamento),
+      valorCausa: valorInteiro(proc.valorCausa),
+      orgaoJulgador: proc.orgaoJulgador,
+      orgaoJulgadorCodigo: proc.orgaoJulgadorCodigo,
+      sistema: proc.sistema,
+      formato: proc.formato,
+      dadosOriginais: {
+        fonte: 'oab_search_summary',
+        tribunalCodigo,
+        resumo: proc,
+      },
+      enriquecido: false,
+    };
+
+    const existente = await Processo.findOne({
+      where: { numeroProcesso: proc.numeroProcesso },
+    });
+
+    if (existente) {
+      const updateData: Partial<typeof dadosResumo> = {
+        tribunalId: dadosResumo.tribunalId,
+      };
+      if (advogadoId) updateData.advogadoId = advogadoId;
+
+      if (existente.enriquecido !== true) {
+        Object.assign(updateData, dadosResumo);
+      }
+
+      await existente.update(updateData);
+      await this.garantirMonitoramentoDiarioSemTransacao(existente.id, advogadoId);
+      return existente.numeroProcesso;
+    }
+
+    const processo = await Processo.create({
+      numeroProcesso: proc.numeroProcesso,
+      ...dadosResumo,
+    });
+    await this.garantirMonitoramentoDiarioSemTransacao(processo.id, advogadoId);
+    return processo.numeroProcesso;
   }
 
   /**
@@ -532,9 +619,14 @@ class TribunalService {
               .then(resultado => resultado.processo.numeroProcesso),
             ENRICHMENT_TIMEOUT_MS,
             `Enriquecimento ${proc.numeroProcesso}`
-          ).catch(error => {
+          ).catch(async error => {
             logger.warn(`Falha ao processar processo ${proc.numeroProcesso}: ${error}`);
-            return null;
+            try {
+              return await this.salvarResumoProcessoOAB(proc, tribunalCodigo, advogadoId);
+            } catch (fallbackError) {
+              logger.warn(`Falha ao salvar resumo OAB ${proc.numeroProcesso}: ${fallbackError}`);
+              return null;
+            }
           })
         )
       );
@@ -546,14 +638,14 @@ class TribunalService {
       logger.info(`[Cache OAB] Enriquecidos ${Math.min(i + MAX_PARALLEL_FETCHES, processosResultado.length)}/${processosResultado.length} processos`);
     }
 
-    const numerosEnriquecidos = Array.from(new Set(enriquecidosComSucesso));
+    const numerosPersistidos = Array.from(new Set(enriquecidosComSucesso));
 
     // Salva nos dois níveis de cache
     const ttlMs = CACHE_TTL_MINUTES * 60 * 1000;
 
     if (!buscaComFiltroNome && !buscaLimitada && !onlyMissing) {
       // L1: Cache em memória
-      oabCacheService.set(oabNormalizada, tribunalCodigo, numerosEnriquecidos, ttlMs, nome, resumoOab);
+      oabCacheService.set(oabNormalizada, tribunalCodigo, numerosProcessos, ttlMs, nome, resumoOab);
 
       // L2: Cache no banco
       const expiraEm = new Date();
@@ -562,21 +654,21 @@ class TribunalService {
       await OABBuscaCache.upsert({
         oab: oabNormalizada,
         tribunalCodigo,
-        resultadoJson: { numerosProcessos: numerosEnriquecidos, resumo: resumoOab },
-        totalProcessos: numerosEnriquecidos.length,
+        resultadoJson: { numerosProcessos, resumo: resumoOab },
+        totalProcessos: numerosProcessos.length,
         expiraEm,
       });
     }
 
     const processos = await montarProcessosParaApi(
-      numerosEnriquecidos,
+      numerosProcessos,
       tribunalCodigo,
       resumoOab,
       carregarProcessos
     );
 
     const tempoMs = Date.now() - inicio;
-    logger.info(`[Cache OAB] Busca completada para ${oabNormalizada}: ${numerosProcessos.length} processos (${numerosEnriquecidos.length} enriquecidos) em ${tempoMs}ms`);
+    logger.info(`[Cache OAB] Busca completada para ${oabNormalizada}: ${numerosProcessos.length} processos (${numerosPersistidos.length} persistidos) em ${tempoMs}ms`);
 
     return { processos, doCache: false, tempoMs, fontes };
   }

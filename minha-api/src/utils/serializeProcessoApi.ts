@@ -179,7 +179,8 @@ export async function montarProcessosParaApi(
   return numerosNormalizados.flatMap(numero => {
     const db = dbMap.get(numero);
     const item = resumoMap.get(numero);
-    if (db?.enriquecido === true) return serializeProcessoModel(db, tribunalCodigo, item);
+    if (db) return serializeProcessoModel(db, tribunalCodigo, item);
+    if (item) return serializeResumoOab(item, tribunalCodigo);
     return [];
   });
 }
