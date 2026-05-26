@@ -598,97 +598,113 @@ export async function agendarScrapingBatch(
   return jobs;
 }
 
+let processorStarted = false;
+
 /**
- * Processador de jobs de scraping
+ * Inicia o processador de jobs de scraping.
+ *
+ * A API importa este módulo para enfileirar jobs, mas não deve processá-los.
+ * Somente o worker chama esta função para evitar scraping pesado no processo HTTP.
  */
-scrapeQueue.process(async (job: Job<ScrapeJobData>): Promise<ScrapeJobResult> => {
-  const { tipo = 'PROCESSO', numeroProcesso, tribunalCodigo, advogadoId, processoId, correlationId, monitoramentoId } = job.data;
-  
-  logger.info(`Processando scraping: ${tipo}`, { jobId: job.id, correlationId });
-  
-  try {
-    if (tipo === 'INITIAL_OAB_CRAWL') {
-      return processInitialOABCrawl(job);
-    }
+export function startScrapeQueueProcessor(): void {
+  if (processorStarted) {
+    logger.warn('ScrapeQueue processor já iniciado neste processo');
+    return;
+  }
 
-    if (tipo === 'OAB_CRAWL') {
-      const result = await processInitialOABCrawl(job);
-      return { ...result, tipo: 'OAB_CRAWL' };
-    }
+  processorStarted = true;
 
-    if (tipo === 'FIRECRAWL_AUX') {
-      if (!processoId) {
-        throw new Error('Job FIRECRAWL_AUX inválido: processoId é obrigatório');
+  scrapeQueue.process(async (job: Job<ScrapeJobData>): Promise<ScrapeJobResult> => {
+    const { tipo = 'PROCESSO', numeroProcesso, tribunalCodigo, advogadoId, processoId, correlationId, monitoramentoId } = job.data;
+
+    logger.info(`Processando scraping: ${tipo}`, { jobId: job.id, correlationId });
+
+    try {
+      if (tipo === 'INITIAL_OAB_CRAWL') {
+        return processInitialOABCrawl(job);
       }
 
-      const enrichment = await FirecrawlEnrichmentService.enrichProcesso({
-        processoId,
-        urls: job.data.urls || [],
-        forceRefresh: job.data.forceRefresh,
-        onlyMainContent: job.data.onlyMainContent,
-      });
+      if (tipo === 'OAB_CRAWL') {
+        const result = await processInitialOABCrawl(job);
+        return { ...result, tipo: 'OAB_CRAWL' };
+      }
+
+      if (tipo === 'FIRECRAWL_AUX') {
+        if (!processoId) {
+          throw new Error('Job FIRECRAWL_AUX inválido: processoId é obrigatório');
+        }
+
+        const enrichment = await FirecrawlEnrichmentService.enrichProcesso({
+          processoId,
+          urls: job.data.urls || [],
+          forceRefresh: job.data.forceRefresh,
+          onlyMainContent: job.data.onlyMainContent,
+        });
+
+        return {
+          sucesso: enrichment.results.some(result => result.ok),
+          tipo: 'FIRECRAWL_AUX',
+          processoId,
+          firecrawl: {
+            totalUrls: enrichment.results.length,
+            totalOk: enrichment.results.filter(result => result.ok).length,
+            updatedAt: enrichment.updatedAt,
+          },
+        };
+      }
+
+      // Verifica se o adapter existe
+      const adapter = registry.get(tribunalCodigo);
+      if (!adapter) {
+        throw new Error(`Tribunal não suportado: ${tribunalCodigo}`);
+      }
+
+      // Executa a busca e salvamento
+      const resultado = await TribunalService.buscarESalvarProcesso(
+        numeroProcesso,
+        tribunalCodigo,
+        advogadoId
+      );
+
+      if (monitoramentoId) {
+        await Monitoramento.update(
+          { ultimoPoll: new Date() },
+          { where: { id: monitoramentoId } }
+        );
+      }
+
+      if (!resultado.ehNovo && advogadoId && resultado.novasMovimentacoes > 0) {
+        try {
+          await registrarNotificacaoMovimentacao(
+            resultado.processo.id,
+            resultado.processo.numeroProcesso,
+            advogadoId,
+            resultado.novasMovimentacoes
+          );
+        } catch (notificationError) {
+          logger.warn('Movimentações novas salvas, mas a notificação falhou', {
+            processoId: resultado.processo.id,
+            novasMovimentacoes: resultado.novasMovimentacoes,
+            error: (notificationError as Error).message,
+          });
+        }
+      }
 
       return {
-        sucesso: enrichment.results.some(result => result.ok),
-        tipo: 'FIRECRAWL_AUX',
-        processoId,
-        firecrawl: {
-          totalUrls: enrichment.results.length,
-          totalOk: enrichment.results.filter(result => result.ok).length,
-          updatedAt: enrichment.updatedAt,
-        },
+        sucesso: true,
+        tipo: 'PROCESSO',
+        processoId: resultado.processo.id,
+        novasMovimentacoes: resultado.novasMovimentacoes,
       };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Erro desconhecido';
+      logger.error(`Erro no scraping de ${numeroProcesso}:`, error);
+      throw error instanceof Error ? error : new Error(message);
     }
+  });
 
-    // Verifica se o adapter existe
-    const adapter = registry.get(tribunalCodigo);
-    if (!adapter) {
-      throw new Error(`Tribunal não suportado: ${tribunalCodigo}`);
-    }
-    
-    // Executa a busca e salvamento
-    const resultado = await TribunalService.buscarESalvarProcesso(
-      numeroProcesso,
-      tribunalCodigo,
-      advogadoId
-    );
-
-    if (monitoramentoId) {
-      await Monitoramento.update(
-        { ultimoPoll: new Date() },
-        { where: { id: monitoramentoId } }
-      );
-    }
-
-    if (!resultado.ehNovo && advogadoId && resultado.novasMovimentacoes > 0) {
-      try {
-        await registrarNotificacaoMovimentacao(
-          resultado.processo.id,
-          resultado.processo.numeroProcesso,
-          advogadoId,
-          resultado.novasMovimentacoes
-        );
-      } catch (notificationError) {
-        logger.warn('Movimentações novas salvas, mas a notificação falhou', {
-          processoId: resultado.processo.id,
-          novasMovimentacoes: resultado.novasMovimentacoes,
-          error: (notificationError as Error).message,
-        });
-      }
-    }
-    
-    return {
-      sucesso: true,
-      tipo: 'PROCESSO',
-      processoId: resultado.processo.id,
-      novasMovimentacoes: resultado.novasMovimentacoes,
-    };
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Erro desconhecido';
-    logger.error(`Erro no scraping de ${numeroProcesso}:`, error);
-    throw error instanceof Error ? error : new Error(message);
-  }
-});
+  logger.info('ScrapeQueue processor iniciado');
+}
 
 /**
  * Obtém estatísticas da fila

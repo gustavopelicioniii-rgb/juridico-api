@@ -7,7 +7,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import { connectDatabase } from './config/database';
-import './queues/ScraperQueue';
+import { startScrapeQueueProcessor } from './queues/ScraperQueue';
 import { notificationService } from './websocket';
 import MonitoringService from './services/MonitoringService';
 import ProcessoMonitoramentoService from './services/ProcessoMonitoramentoService';
@@ -33,7 +33,8 @@ async function main() {
       logger.info(`Worker WebSocket listener on port ${PORT}`);
     });
 
-    // Inicia fila Bull (começa automaticamente no import)
+    // Inicia fila Bull apenas no processo worker.
+    startScrapeQueueProcessor();
 
     // Inicia serviço de monitoramento
     MonitoringService.start(DEFAULT_MONITORING_POLL_INTERVAL_MS);

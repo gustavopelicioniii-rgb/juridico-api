@@ -4,6 +4,7 @@ export {
   agendarScrapingBatch,
   agendarOABCrawl,
   agendarFirecrawlEnrichment,
+  startScrapeQueueProcessor,
   getQueueStats,
   getJob,
   pauseQueue,
