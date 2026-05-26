@@ -6,6 +6,7 @@ import type { Advogado, Processo } from '../types/api';
 
 const OAB_JOB_POLL_INTERVAL_MS = 3000;
 const OAB_PROCESS_REFRESH_ATTEMPTS = 2;
+const ALL_TRIBUNALS_INPUTS = new Set(['TODOS', 'ALL', 'NACIONAL', 'BRASIL']);
 
 export default function AdvogadosPage() {
   const [advogados, setAdvogados] = useState<Advogado[]>([]);
@@ -187,18 +188,29 @@ export default function AdvogadosPage() {
   };
 
   const handleBuscarProcessos = async (advogado: Advogado) => {
-    const tribunal = window.prompt('Digite o código do tribunal (ex.: TJSP, TJMG, TRT2, STJ):')?.trim().toUpperCase();
+    const tribunal = window.prompt('Digite o código do tribunal (ex.: TJSP, TJMG, TRT2, STJ) ou TODOS para varrer todos:')?.trim().toUpperCase();
     if (!tribunal) return;
+    const buscaNacional = ALL_TRIBUNALS_INPUTS.has(tribunal);
     
     try {
       setSearchingOABAdvogadoId(advogado.id);
+      setOnboardingMessage(
+        buscaNacional
+          ? `Agendando varredura nacional por OAB para ${advogado.nome}. Isso pode levar alguns minutos.`
+          : `Agendando busca por OAB em ${tribunal} para ${advogado.nome}.`
+      );
       const resultado = await processoService.searchByOABAsync(tribunal, {
         oab: advogado.oab,
         nome: advogado.nome,
         advogadoId: advogado.id,
       });
 
-      setOnboardingMessage(resultado.mensagem || `Busca por OAB agendada para ${advogado.nome}.`);
+      setOnboardingMessage(
+        resultado.mensagem ||
+          (buscaNacional
+            ? `Varredura nacional por OAB agendada para ${advogado.nome}.`
+            : `Busca por OAB agendada para ${advogado.nome}.`)
+      );
       await waitForOABJob(resultado.jobId, advogado);
     } catch (err) {
       console.error('Erro ao buscar processos:', err);

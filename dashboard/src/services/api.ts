@@ -162,7 +162,7 @@ export const advogadoService = {
     await api.delete(`/advogados/${id}`);
   },
 
-  getProcessos: async (id: string, limite = 200) => {
+  getProcessos: async (id: string, limite = 500) => {
     const { data } = await api.get<{ processos: any[] }>(`/advogados/${id}/processos`, {
       params: { limite },
     });
@@ -239,6 +239,8 @@ export const processoService = {
       jobId: string;
       queueJobId: string;
       mensagem: string;
+      tribunais?: string[];
+      totalTribunais?: number;
     }>(
       `/tribunais/${tribunalCodigo}/buscar-oab/async`,
       params,

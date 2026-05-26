@@ -14,7 +14,6 @@ import Processo from '../models/Processo';
 import Notification from '../models/Notification';
 import JobModel from '../models/Job';
 import notificationService from '../websocket/NotificationService';
-import { DEFAULT_PROCESS_MONITORING_INTERVAL_MINUTES } from '../config/monitoring';
 // TribunalDerivacaoService removed - stub functions
 const derivarTribunaisPorOAB = (_oab: string): string[] => [];
 
@@ -479,28 +478,6 @@ export async function agendarFirecrawlEnrichment(data: {
   return job;
 }
 
-async function ensureMonitoramentoParaProcesso(processoId: string, advogadoId?: string): Promise<void> {
-  if (!advogadoId) {
-    return;
-  }
-
-  const existingMonitoramento = await Monitoramento.findOne({
-    where: { processoId, ativo: true },
-  });
-
-  if (existingMonitoramento) {
-    return;
-  }
-
-  await Monitoramento.create({
-    advogadoId,
-    processoId,
-    intervaloMinutos: DEFAULT_PROCESS_MONITORING_INTERVAL_MINUTES,
-    ativo: true,
-    ultimoPoll: new Date(),
-  });
-}
-
 async function processInitialOABCrawl(job: Job<ScrapeJobData>): Promise<ScrapeJobResult> {
   const { advogadoId, oab, nome, tribunais = [], correlationId } = job.data;
 
@@ -522,6 +499,7 @@ async function processInitialOABCrawl(job: Job<ScrapeJobData>): Promise<ScrapeJo
 
   let totalEncontrados = 0;
   let totalSalvos = 0;
+  let tribunaisComErro = 0;
 
   for (const tribunalCodigoRaw of tribunaisAlvo) {
     const tribunalCodigo = tribunalCodigoRaw.toUpperCase();
@@ -537,28 +515,28 @@ async function processInitialOABCrawl(job: Job<ScrapeJobData>): Promise<ScrapeJo
       continue;
     }
 
-    const resultadoBusca = await adapter.buscarPorOAB(oab, nome);
-    totalEncontrados += resultadoBusca.total;
+    try {
+      const resultadoBusca = await TribunalService.buscarPorOABComCache(
+        oab,
+        tribunalCodigo,
+        nome,
+        advogadoId,
+        false,
+        undefined,
+        false
+      );
 
-    for (const processoResumo of resultadoBusca.processos) {
-      try {
-        const resultado = await TribunalService.buscarESalvarProcesso(
-          processoResumo.numeroProcesso,
-          tribunalCodigo,
-          advogadoId
-        );
-        totalSalvos += 1;
-        await ensureMonitoramentoParaProcesso(resultado.processo.id, advogadoId);
-      } catch (error) {
-        logger.warn('Falha ao salvar processo durante initial_oab_crawl', {
-          tribunalCodigo,
-          numeroProcesso: processoResumo.numeroProcesso,
-          advogadoId,
-          oab,
-          correlationId,
-          error: (error as Error).message,
-        });
-      }
+      totalEncontrados += resultadoBusca.processos.length;
+      totalSalvos += resultadoBusca.processos.length;
+    } catch (error) {
+      tribunaisComErro += 1;
+      logger.warn('Falha ao buscar OAB em tribunal durante crawl; seguindo para o próximo', {
+        tribunalCodigo,
+        advogadoId,
+        oab,
+        correlationId,
+        error: (error as Error).message,
+      });
     }
   }
 
@@ -589,6 +567,7 @@ async function processInitialOABCrawl(job: Job<ScrapeJobData>): Promise<ScrapeJo
     tipo: 'INITIAL_OAB_CRAWL',
     totalEncontrados,
     totalSalvos,
+    erro: tribunaisComErro > 0 ? `${tribunaisComErro} tribunal(is) falharam durante a varredura.` : undefined,
   };
 }
 

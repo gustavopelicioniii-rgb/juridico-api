@@ -31,6 +31,8 @@ const getRequestId = (req: Request): string | undefined => {
 
 type BuscaOABStatus = 'success' | 'empty' | 'captcha' | 'requires-auth' | 'blocked';
 
+const ALL_TRIBUNALS_CODES = new Set(['TODOS', 'ALL', 'NACIONAL', 'BRASIL']);
+
 const buildAcaoRequerida = (fonte?: {
   fonte: string;
   status: string;
@@ -835,6 +837,7 @@ router.post('/tribunais/:codigo/buscar-oab/async', async (req: Request, res: Res
     const { codigo } = req.params;
     const { oab, nome, advogadoId, requestedBy } = req.body;
     const tribunalCodigo = codigo.toUpperCase();
+    const buscaNacional = ALL_TRIBUNALS_CODES.has(tribunalCodigo);
 
     if (!oab || !advogadoId) {
       return res.status(400).json({
@@ -846,9 +849,12 @@ router.post('/tribunais/:codigo/buscar-oab/async', async (req: Request, res: Res
     }
 
     const { registry } = await import('../tribunais');
-    const adapter = registry.get(tribunalCodigo);
+    const tribunaisAlvo = buscaNacional
+      ? registry.listar().map((tribunal) => tribunal.codigo)
+      : [tribunalCodigo];
+    const adapter = buscaNacional ? undefined : registry.get(tribunalCodigo);
 
-    if (!adapter) {
+    if (!buscaNacional && !adapter) {
       return res.status(400).json({
         erro: { codigo: 'TRIBUNAL_NOT_SUPPORTED', mensagem: `Tribunal não suportado: ${codigo}` },
       });
@@ -862,7 +868,7 @@ router.post('/tribunais/:codigo/buscar-oab/async', async (req: Request, res: Res
     }
 
     const oabNormalizada = String(oab).toUpperCase().replace(/\s/g, '');
-    const correlationId = `${advogadoId}:${tribunalCodigo}:${Date.now()}`;
+    const correlationId = `${advogadoId}:${buscaNacional ? 'TODOS' : tribunalCodigo}:${Date.now()}`;
 
     auditJob = await Job.create({
       tipo: 'SCRAPE',
@@ -875,7 +881,8 @@ router.post('/tribunais/:codigo/buscar-oab/async', async (req: Request, res: Res
         advogadoId,
         oab: oabNormalizada,
         nome,
-        tribunalCodigo,
+        tribunalCodigo: buscaNacional ? 'TODOS' : tribunalCodigo,
+        tribunais: tribunaisAlvo,
         requestedBy: requestedBy || 'manual-oab-search',
         correlationId,
       },
@@ -885,7 +892,7 @@ router.post('/tribunais/:codigo/buscar-oab/async', async (req: Request, res: Res
       advogadoId,
       oab: oabNormalizada,
       nome,
-      tribunais: [tribunalCodigo],
+      tribunais: tribunaisAlvo,
       prioridade: 1,
       requestedBy: requestedBy || 'manual-oab-search',
       correlationId,
@@ -905,7 +912,11 @@ router.post('/tribunais/:codigo/buscar-oab/async', async (req: Request, res: Res
       status: 'queued',
       jobId: auditJob.id,
       queueJobId: String(queueJob.id),
-      mensagem: 'Busca por OAB agendada. Os processos serão salvos em background.',
+      tribunais: tribunaisAlvo,
+      totalTribunais: tribunaisAlvo.length,
+      mensagem: buscaNacional
+        ? `Busca nacional por OAB agendada em ${tribunaisAlvo.length} tribunais. Os processos serão salvos em background.`
+        : 'Busca por OAB agendada. Os processos serão salvos em background.',
     });
   } catch (error: any) {
     if (auditJob) {
