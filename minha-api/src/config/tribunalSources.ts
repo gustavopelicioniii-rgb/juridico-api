@@ -80,6 +80,11 @@ function dataJudStrategy(sigla: string): TribunalSourceStrategy {
 }
 
 function pjeUrlsFor(codigo: string): string[] {
+  // TJRJ não expõe PJe em pje.tjrj.jus.br (DNS inexistente); consulta pública fica em www3.
+  if (codigo === 'TJRJ') {
+    return [];
+  }
+
   if (codigo === 'TJMG') {
     return [
       'https://pe.tjmg.jus.br/rupe/index.jsp',
@@ -119,6 +124,20 @@ function pjeUrlsFor(codigo: string): string[] {
 function defaultStrategies(codigo: string, sigla: string): TribunalSourceStrategy[] {
   const strategies: TribunalSourceStrategy[] = [];
   const tipo = inferTribunalTipo(codigo);
+
+  if (codigo === 'TJRJ') {
+    strategies.push({
+      kind: 'court-specific',
+      policy: 'public',
+      priority: 1,
+      urls: [
+        'https://www3.tjrj.jus.br/consultaprocessual/#/consultapublica#oab',
+        'https://www3.tjrj.jus.br/consultaprocessual/',
+      ],
+      description:
+        'Consulta processual pública do TJRJ (www3); exige comarca/competência no portal — integração dedicada pendente.',
+    });
+  }
 
   if (codigo === 'TJSP') {
     strategies.push({

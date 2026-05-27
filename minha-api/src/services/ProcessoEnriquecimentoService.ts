@@ -8,6 +8,9 @@ import { registry } from '../tribunais';
 import TribunalService from './TribunalService';
 import Processo from '../models/Processo';
 import logger from '../config/logger';
+import { derivarTribunaisPorOAB } from '../utils/derivarTribunaisPorOAB';
+
+const FALLBACK_TRIBUNAIS_OAB = ['TJSP', 'TJMG', 'STJ', 'STF'];
 
 interface ProcessoEnriquecido {
   numeroProcesso: string;
@@ -24,29 +27,20 @@ interface ResultadoOAB {
   atualizados: string[];
 }
 
-function derivarTribunaisPorOAB(oab: string): string[] {
-  const uf = oab.replace(/\d/g, '').toUpperCase().trim();
-  const ufMap: Record<string, string[]> = {
-    SP: ['TJSP'], MG: ['TJMG'], RJ: ['TJRJ'], RS: ['TJRS'],
-    PR: ['TJPR'], SC: ['TJSC'], BA: ['TJBA'], CE: ['TJCE'],
-    PE: ['TJPE'], PA: ['TJPA'], MA: ['TJMA'], GO: ['TJGO'],
-    '2': ['TRT2'], '3': ['TRT3'], '4': ['TRT4'], '6': ['TRT6'],
-    '8': ['TRT8'], '9': ['TRT9'], '10': ['TRT10'], '11': ['TRT11'],
-    '12': ['TRT12'], '13': ['TRT13'], '14': ['TJ14'], '15': ['TJ15'],
-    '16': ['TJ16'], '17': ['TJ17'], '18': ['TJ18'], '19': ['TJ19'],
-    '20': ['TJ20'], '21': ['TJ21'], '22': ['TJ22'], '23': ['TJ23'],
-    '24': ['TJ24'], '1': ['TRT1'],
-  };
-  return ufMap[uf] || ['TJSP', 'TJMG', 'STJ', 'STF'];
-}
-
 async function buscarPorOABEnriquecido(
   oab: string,
   _enriquecer = true,
   nome?: string
 ): Promise<ResultadoOAB> {
   const oabFormatada = oab.toUpperCase().replace(/\s/g, '');
-  const tribunais = derivarTribunaisPorOAB(oabFormatada);
+  const tribunaisDerivados = derivarTribunaisPorOAB(oabFormatada);
+  const tribunais = tribunaisDerivados.length > 0
+    ? tribunaisDerivados
+    : FALLBACK_TRIBUNAIS_OAB.filter((codigo) => Boolean(registry.get(codigo)));
+
+  if (tribunaisDerivados.length === 0) {
+    logger.info('[Enriquecimento] OAB sem UF detectÃ¡vel; aplicando fallback de tribunais');
+  }
 
   logger.info('[Enriquecimento] Busca OAB ' + oabFormatada + ' em ' + tribunais.length + ' tribunais');
 

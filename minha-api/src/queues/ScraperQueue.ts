@@ -14,8 +14,7 @@ import Processo from '../models/Processo';
 import Notification from '../models/Notification';
 import JobModel from '../models/Job';
 import notificationService from '../websocket/NotificationService';
-// TribunalDerivacaoService removed - stub functions
-const derivarTribunaisPorOAB = (_oab: string): string[] => [];
+import { derivarTribunaisPorOAB } from '../utils/derivarTribunaisPorOAB';
 
 // Configuração da fila
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';

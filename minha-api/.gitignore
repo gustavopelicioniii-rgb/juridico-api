@@ -32,3 +32,6 @@ coverage/
 # Test
 *.test.js
 *.spec.js
+
+# Scripts de pesquisa local
+scripts/probes/

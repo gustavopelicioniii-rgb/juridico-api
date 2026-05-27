@@ -21,6 +21,7 @@ import {
   DEFAULT_PROCESS_MONITORING_INTERVAL_MINUTES,
   normalizeProcessMonitoringInterval,
 } from '../config/monitoring';
+import { expandirTribunaisPorOAB } from '../utils/derivarTribunaisPorOAB';
 
 const router = Router();
 
@@ -848,13 +849,20 @@ router.post('/tribunais/:codigo/buscar-oab/async', async (req: Request, res: Res
       });
     }
 
+    const oabNormalizada = String(oab).toUpperCase().replace(/\s/g, '');
     const { registry } = await import('../tribunais');
-    const tribunaisAlvo = buscaNacional
-      ? registry.listar().map((tribunal) => tribunal.codigo)
-      : [tribunalCodigo];
-    const adapter = buscaNacional ? undefined : registry.get(tribunalCodigo);
+    const tribunaisRegistrados = registry
+      .listar()
+      .map((tribunal) => tribunal.codigo.toUpperCase());
+    const tribunaisDisponiveis = new Set(tribunaisRegistrados);
+    const tribunaisSolicitados = buscaNacional
+      ? tribunaisRegistrados
+      : expandirTribunaisPorOAB(tribunalCodigo, oabNormalizada);
+    const tribunaisAlvo = Array.from(
+      new Set(tribunaisSolicitados.map((codigoTribunal) => codigoTribunal.toUpperCase()))
+    ).filter((codigoTribunal) => tribunaisDisponiveis.has(codigoTribunal));
 
-    if (!buscaNacional && !adapter) {
+    if (!buscaNacional && !tribunaisDisponiveis.has(tribunalCodigo)) {
       return res.status(400).json({
         erro: { codigo: 'TRIBUNAL_NOT_SUPPORTED', mensagem: `Tribunal não suportado: ${codigo}` },
       });
@@ -867,7 +875,6 @@ router.post('/tribunais/:codigo/buscar-oab/async', async (req: Request, res: Res
       });
     }
 
-    const oabNormalizada = String(oab).toUpperCase().replace(/\s/g, '');
     const correlationId = `${advogadoId}:${buscaNacional ? 'TODOS' : tribunalCodigo}:${Date.now()}`;
 
     auditJob = await Job.create({
@@ -934,7 +941,7 @@ router.post('/tribunais/:codigo/buscar-oab/async', async (req: Request, res: Res
 
 router.post('/tribunais/:codigo/processos/:numero/refresh', async (req: Request, res: Response) => {
   try {
-    const { codigo, numero } = req.params;
+    const { numero } = req.params;
     
     const processo = await Processo.findOne({
       where: { numeroProcesso: numero },
