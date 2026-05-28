@@ -6,6 +6,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import logger from '../config/logger';
+import { cache } from '../config/redis';
 
 export interface AuthPayload {
   userId: string;
@@ -50,14 +51,18 @@ export function validateAuthConfig(): void {
 const ACCESS_EXPIRES_IN_SECONDS = 3600;   // 1 hour
 const REFRESH_EXPIRES_IN_SECONDS = 604800; // 7 days
 
-// In-memory token blacklist (use Redis in production for multi-instance)
+// In-memory fallback for revogados quando Redis estiver indisponível
 const tokenBlacklist = new Set<string>();
 const REFRESH_TOKEN_BLACKLIST_PREFIX = 'blacklist:refresh:';
+const ACCESS_TOKEN_BLACKLIST_PREFIX = 'blacklist:access:';
 
 /**
  * Adiciona um token à blacklist
  */
-export function blacklistToken(jti: string, isRefresh = false): void {
+export async function blacklistToken(jti: string, expiresAt?: number, isRefresh = false): Promise<void> {
+  const ttlSeconds = expiresAt ? Math.max(1, expiresAt - Math.floor(Date.now() / 1000)) : 3600;
+  const prefix = isRefresh ? REFRESH_TOKEN_BLACKLIST_PREFIX : ACCESS_TOKEN_BLACKLIST_PREFIX;
+  await cache.set(`${prefix}${jti}`, '1', ttlSeconds);
   if (isRefresh) {
     tokenBlacklist.add(REFRESH_TOKEN_BLACKLIST_PREFIX + jti);
   } else {
@@ -68,7 +73,10 @@ export function blacklistToken(jti: string, isRefresh = false): void {
 /**
  * Verifica se um token está na blacklist
  */
-export function isTokenBlacklisted(jti: string, isRefresh = false): boolean {
+export async function isTokenBlacklisted(jti: string, isRefresh = false): Promise<boolean> {
+  const prefix = isRefresh ? REFRESH_TOKEN_BLACKLIST_PREFIX : ACCESS_TOKEN_BLACKLIST_PREFIX;
+  const fromCache = await cache.get(`${prefix}${jti}`);
+  if (fromCache) return true;
   if (isRefresh) {
     return tokenBlacklist.has(REFRESH_TOKEN_BLACKLIST_PREFIX + jti);
   }
@@ -105,7 +113,7 @@ export function generateRefreshToken(payload: Omit<AuthPayload, 'iat' | 'exp' | 
 /**
  * Verifica token JWT
  */
-export function verifyToken(token: string, isRefresh = false): AuthPayload {
+export async function verifyToken(token: string, isRefresh = false): Promise<AuthPayload> {
   const secret = isRefresh ? (JWT_REFRESH_SECRET || JWT_SECRET!) : JWT_SECRET!;
   const decoded = jwt.verify(token, secret) as AuthPayload;
 
@@ -117,7 +125,7 @@ export function verifyToken(token: string, isRefresh = false): AuthPayload {
   }
 
   // Verifica blacklist
-  if (decoded.jti && isTokenBlacklisted(decoded.jti, isRefresh)) {
+  if (decoded.jti && await isTokenBlacklisted(decoded.jti, isRefresh)) {
     throw new Error('TOKEN_REVOKED');
   }
 
@@ -158,30 +166,32 @@ export function authMiddleware(
 
   const token = parts[1];
 
-  try {
-    const decoded = verifyToken(token, false);
-    req.user = decoded;
-    next();
-  } catch (error: any) {
-    logger.warn('Tentativa de acesso com token inválido:', { error: error.message });
+  void (async () => {
+    try {
+      const decoded = await verifyToken(token, false);
+      req.user = decoded;
+      next();
+    } catch (error: any) {
+      logger.warn('Tentativa de acesso com token inválido:', { error: error.message });
 
-    if (error.name === 'TokenExpiredError') {
+      if (error.name === 'TokenExpiredError') {
+        res.status(401).json({
+          erro: {
+            codigo: 'TOKEN_EXPIRED',
+            mensagem: 'Token de autenticação expirado.',
+          },
+        });
+        return;
+      }
+
       res.status(401).json({
         erro: {
-          codigo: 'TOKEN_EXPIRED',
-          mensagem: 'Token de autenticação expirado.',
+          codigo: 'INVALID_TOKEN',
+          mensagem: 'Token de autenticação inválido.',
         },
       });
-      return;
     }
-
-    res.status(401).json({
-      erro: {
-        codigo: 'INVALID_TOKEN',
-        mensagem: 'Token de autenticação inválido.',
-      },
-    });
-  }
+  })();
 }
 
 /**
@@ -202,12 +212,17 @@ export function optionalAuthMiddleware(
   const parts = authHeader.split(' ');
 
   if (parts.length === 2 && parts[0] === 'Bearer') {
-    try {
-      const decoded = verifyToken(parts[1], false);
-      req.user = decoded;
-    } catch {
-      // Token inválido, mas continuamos sem usuário
-    }
+    void (async () => {
+      try {
+        const decoded = await verifyToken(parts[1], false);
+        req.user = decoded;
+      } catch {
+        // Token inválido, mas continuamos sem usuário
+      } finally {
+        next();
+      }
+    })();
+    return;
   }
 
   next();

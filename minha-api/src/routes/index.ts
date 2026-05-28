@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+﻿import { Router, Request, Response } from 'express';
 import { Op } from 'sequelize';
 import { sequelize } from '../models';
 import '../models';
@@ -14,7 +14,9 @@ import TribunalService from '../services/TribunalService';
 import FirecrawlEnrichmentService from '../services/FirecrawlEnrichmentService';
 import { agendarFirecrawlEnrichment, agendarOABCrawl } from '../queues/ScraperQueue';
 import { authRouter } from './auth';
-import { authMiddleware } from '../middleware/auth';
+import { authMiddleware, requireRole } from '../middleware/auth';
+import { accountRateLimitMiddleware } from '../middleware/accountRateLimit';
+import { usageAuditMiddleware } from '../middleware/usageAudit';
 import { cache, CACHE_TTL, CACHE_KEYS } from '../config/redis';
 import logger from '../config/logger';
 import {
@@ -22,6 +24,11 @@ import {
   normalizeProcessMonitoringInterval,
 } from '../config/monitoring';
 import { expandirTribunaisPorOAB } from '../utils/derivarTribunaisPorOAB';
+import {
+  getActorAdvogadoId as getActorAdvogadoIdFromPayload,
+  isElevatedRole as isElevatedRoleByRole,
+  resolveScopedAdvogadoIdForActor,
+} from '../utils/tenantScope';
 
 const router = Router();
 
@@ -30,7 +37,46 @@ const getRequestId = (req: Request): string | undefined => {
   return withRequestId.requestId;
 };
 
-type BuscaOABStatus = 'success' | 'empty' | 'captcha' | 'requires-auth' | 'blocked';
+const isElevatedRole = (req: Request): boolean =>
+  isElevatedRoleByRole(req.user?.role);
+
+const getActorAdvogadoId = (req: Request): string | null =>
+  getActorAdvogadoIdFromPayload(req.user);
+
+const resolveScopedAdvogadoId = (
+  req: Request,
+  requestedAdvogadoId?: string | null
+): { ok: true; advogadoId?: string } | { ok: false; status: number; body: unknown } => {
+  return resolveScopedAdvogadoIdForActor(req.user, requestedAdvogadoId);
+};
+
+const ensureProcessAccess = async (req: Request, processoId: string): Promise<{
+  status?: number;
+  body?: unknown;
+  processo?: Processo;
+}> => {
+  const processo = await Processo.findByPk(processoId);
+  if (!processo) {
+    return {
+      status: 404,
+      body: { erro: { codigo: 'PROCESSO_NAO_ENCONTRADO', mensagem: 'Processo nÃ£o encontrado.' } },
+    };
+  }
+
+  if (!isElevatedRole(req)) {
+    const actorAdvogadoId = getActorAdvogadoId(req);
+    if (!actorAdvogadoId || processo.advogadoId !== actorAdvogadoId) {
+      return {
+        status: 403,
+        body: { erro: { codigo: 'FORBIDDEN', mensagem: 'Acesso negado ao processo solicitado.' } },
+      };
+    }
+  }
+
+  return { processo };
+};
+
+type BuscaOABStatus = 'success' | 'empty' | 'captcha' | 'requires-auth' | 'blocked' | 'source_unavailable';
 
 const ALL_TRIBUNALS_CODES = new Set(['TODOS', 'ALL', 'NACIONAL', 'BRASIL']);
 
@@ -47,14 +93,14 @@ const buildAcaoRequerida = (fonte?: {
     return {
       tipo: 'captcha',
       titulo: 'Captcha requerido pelo tribunal',
-      mensagem: fonte.mensagem || 'O portal oficial exige resolução manual de captcha para continuar.',
+      mensagem: fonte.mensagem || 'O portal oficial exige resoluÃ§Ã£o manual de captcha para continuar.',
       fonte: fonte.fonte,
       tribunalCodigo: fonte.tribunalCodigo,
       url: fonte.url,
       proximosPassos: [
         'Abrir o portal oficial indicado.',
-        'Resolver o captcha manualmente ou acessar com sessão autorizada.',
-        'Reexecutar a captura após liberar a consulta pública.',
+        'Resolver o captcha manualmente ou acessar com sessÃ£o autorizada.',
+        'Reexecutar a captura apÃ³s liberar a consulta pÃºblica.',
       ],
     };
   }
@@ -63,30 +109,30 @@ const buildAcaoRequerida = (fonte?: {
     return {
       tipo: 'credencial',
       titulo: 'Credencial ou certificado requerido',
-      mensagem: fonte.mensagem || 'O portal oficial exige login, certificado digital ou convênio para consulta por OAB.',
+      mensagem: fonte.mensagem || 'O portal oficial exige login, certificado digital ou convÃªnio para consulta por OAB.',
       fonte: fonte.fonte,
       tribunalCodigo: fonte.tribunalCodigo,
       url: fonte.url,
       proximosPassos: [
         'Usar credenciais/certificado do advogado com consentimento.',
-        'Verificar se existe API, MNI ou convênio oficial para o tribunal.',
-        'Reexecutar a captura com acesso autenticado quando disponível.',
+        'Verificar se existe API, MNI ou convÃªnio oficial para o tribunal.',
+        'Reexecutar a captura com acesso autenticado quando disponÃ­vel.',
       ],
     };
   }
 
-  if (fonte.status === 'blocked') {
+  if (fonte.status === 'blocked' || fonte.status === 'source_unavailable') {
     return {
-      tipo: 'indisponivel',
-      titulo: 'Fonte pública indisponível para automação',
+      tipo: 'source_unavailable',
+      titulo: 'Fonte pÃºblica indisponÃ­vel para automaÃ§Ã£o',
       mensagem: fonte.mensagem || 'O portal oficial bloqueou a consulta automatizada.',
       fonte: fonte.fonte,
       tribunalCodigo: fonte.tribunalCodigo,
       url: fonte.url,
       proximosPassos: [
         'Consultar fonte oficial alternativa.',
-        'Usar importação individual por número CNJ quando disponível.',
-        'Registrar necessidade de integração formal com o tribunal.',
+        'Usar importaÃ§Ã£o individual por nÃºmero CNJ quando disponÃ­vel.',
+        'Registrar necessidade de integraÃ§Ã£o formal com o tribunal.',
       ],
     };
   }
@@ -115,17 +161,24 @@ const logRouteError = (req: Request, route: string, error: unknown) => {
   });
 };
 
-// Rotas de autenticação (públicas)
+// Rotas de autenticaÃ§Ã£o (pÃºblicas)
 router.use('/auth', authRouter);
 
 // Todas as demais rotas exigem JWT
 router.use(authMiddleware);
+router.use(accountRateLimitMiddleware);
+router.use(usageAuditMiddleware);
 
 // ==================== ROTAS PROTEGIDAS ====================
 
 router.get('/dashboard/movimentacoes', async (req: Request, res: Response) => {
   try {
     const { dias = 7 } = req.query;
+    const scoped = resolveScopedAdvogadoId(req);
+    if (!scoped.ok) {
+      return res.status(scoped.status).json(scoped.body);
+    }
+    const whereProcesso = scoped.advogadoId ? { advogadoId: scoped.advogadoId } : undefined;
 
     const agora = new Date();
     const inicio = new Date(agora);
@@ -144,6 +197,7 @@ router.get('/dashboard/movimentacoes', async (req: Request, res: Response) => {
       ],
       group: [sequelize.fn('DATE', sequelize.col('created_at'))],
       order: [[sequelize.fn('DATE', sequelize.col('created_at')), 'ASC']],
+      include: whereProcesso ? [{ model: Processo, as: 'processo', where: whereProcesso, attributes: [] }] : [],
       raw: true,
     }) as unknown as MovimentacaoAgg[];
 
@@ -159,18 +213,18 @@ router.get('/dashboard/movimentacoes', async (req: Request, res: Response) => {
     res.json({ movimentacoes: resultado });
   } catch (error) {
     logRouteError(req, 'GET /dashboard/movimentacoes', error);
-    res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar movimentações.' } });
+    res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar movimentaÃ§Ãµes.' } });
   }
 });
 
-router.get('/tribunais/batch-status', async (req: Request, res: Response) => {
+router.get('/tribunais/batch-status', requireRole('ADMIN'), async (req: Request, res: Response) => {
   try {
     const { codigos } = req.query;
     const listaCodigos = codigos ? (codigos as string).split(',') : [];
 
     if (listaCodigos.length === 0) {
       return res.status(400).json({
-        erro: { codigo: 'VALIDATION_ERROR', mensagem: 'Informe os códigos dos tribunais.' }
+        erro: { codigo: 'VALIDATION_ERROR', mensagem: 'Informe os cÃ³digos dos tribunais.' }
       });
     }
 
@@ -204,8 +258,16 @@ router.get('/tribunais/batch-status', async (req: Request, res: Response) => {
 
 router.get('/advogados', async (req: Request, res: Response) => {
   try {
+    const scoped = resolveScopedAdvogadoId(req);
+    if (!scoped.ok) {
+      return res.status(scoped.status).json(scoped.body);
+    }
+
     const advogados = await Advogado.findAll({
-      where: { ativo: true },
+      where: {
+        ativo: true,
+        ...(scoped.advogadoId ? { id: scoped.advogadoId } : {}),
+      },
       order: [['nome', 'ASC']],
     });
     res.json({ advogados });
@@ -217,9 +279,13 @@ router.get('/advogados', async (req: Request, res: Response) => {
 
 router.get('/advogados/:id', async (req: Request, res: Response) => {
   try {
+    const scoped = resolveScopedAdvogadoId(req, req.params.id);
+    if (!scoped.ok) {
+      return res.status(scoped.status).json(scoped.body);
+    }
     const advogado = await Advogado.findByPk(req.params.id);
     if (!advogado) {
-      return res.status(404).json({ erro: { codigo: 'ADVOGADO_NAO_ENCONTRADO', mensagem: 'Advogado não encontrado.' } });
+      return res.status(404).json({ erro: { codigo: 'ADVOGADO_NAO_ENCONTRADO', mensagem: 'Advogado nÃ£o encontrado.' } });
     }
     res.json({ advogado });
   } catch (error) {
@@ -229,21 +295,25 @@ router.get('/advogados/:id', async (req: Request, res: Response) => {
 
 router.post('/advogados', async (req: Request, res: Response) => {
   try {
+    if (!isElevatedRole(req)) {
+      return res.status(403).json({ erro: { codigo: 'FORBIDDEN', mensagem: 'Apenas ADMIN pode criar advogados por esta rota.' } });
+    }
+
     const { oab, nome, email, skipOnboarding } = req.body;
     
     if (!oab || !nome) {
-      return res.status(400).json({ erro: { codigo: 'VALIDATION_ERROR', mensagem: 'OAB e nome são obrigatórios.' } });
+      return res.status(400).json({ erro: { codigo: 'VALIDATION_ERROR', mensagem: 'OAB e nome sÃ£o obrigatÃ³rios.' } });
     }
     
     const existingAdvogado = await Advogado.findOne({ where: { oab } });
     if (existingAdvogado) {
-      return res.status(409).json({ erro: { codigo: 'DUPLICATE_OAB', mensagem: 'Já existe advogado com esta OAB.' } });
+      return res.status(409).json({ erro: { codigo: 'DUPLICATE_OAB', mensagem: 'JÃ¡ existe advogado com esta OAB.' } });
     }
     
     const advogado = await Advogado.create({ oab, nome, email });
 
     if (skipOnboarding !== true) {
-      // Onboarding é assíncrono e não deve bloquear a criação do advogado
+      // Onboarding Ã© assÃ­ncrono e nÃ£o deve bloquear a criaÃ§Ã£o do advogado
       import('../services/AdvogadoOnboardingService')
         .then(({ default: AdvogadoOnboardingService }) => {
           AdvogadoOnboardingService.start({
@@ -257,7 +327,7 @@ router.post('/advogados', async (req: Request, res: Response) => {
           });
         })
         .catch((err) => {
-          console.error('Serviço de onboarding indisponível:', err);
+          console.error('ServiÃ§o de onboarding indisponÃ­vel:', err);
         });
     }
 
@@ -270,9 +340,14 @@ router.post('/advogados', async (req: Request, res: Response) => {
 
 router.get('/advogados/:id/onboarding-status', async (req: Request, res: Response) => {
   try {
+    const scoped = resolveScopedAdvogadoId(req, req.params.id);
+    if (!scoped.ok) {
+      return res.status(scoped.status).json(scoped.body);
+    }
+
     const advogado = await Advogado.findByPk(req.params.id);
     if (!advogado) {
-      return res.status(404).json({ erro: { codigo: 'ADVOGADO_NAO_ENCONTRADO', mensagem: 'Advogado não encontrado.' } });
+      return res.status(404).json({ erro: { codigo: 'ADVOGADO_NAO_ENCONTRADO', mensagem: 'Advogado nÃ£o encontrado.' } });
     }
 
     const { default: AdvogadoOnboardingService } = await import('../services/AdvogadoOnboardingService');
@@ -285,9 +360,14 @@ router.get('/advogados/:id/onboarding-status', async (req: Request, res: Respons
 
 router.put('/advogados/:id', async (req: Request, res: Response) => {
   try {
+    const scoped = resolveScopedAdvogadoId(req, req.params.id);
+    if (!scoped.ok) {
+      return res.status(scoped.status).json(scoped.body);
+    }
+
     const advogado = await Advogado.findByPk(req.params.id);
     if (!advogado) {
-      return res.status(404).json({ erro: { codigo: 'ADVOGADO_NAO_ENCONTRADO', mensagem: 'Advogado não encontrado.' } });
+      return res.status(404).json({ erro: { codigo: 'ADVOGADO_NAO_ENCONTRADO', mensagem: 'Advogado nÃ£o encontrado.' } });
     }
     
     const { nome, email, ativo } = req.body;
@@ -301,9 +381,13 @@ router.put('/advogados/:id', async (req: Request, res: Response) => {
 
 router.delete('/advogados/:id', async (req: Request, res: Response) => {
   try {
+    if (!isElevatedRole(req)) {
+      return res.status(403).json({ erro: { codigo: 'FORBIDDEN', mensagem: 'Apenas ADMIN pode desativar advogados.' } });
+    }
+
     const advogado = await Advogado.findByPk(req.params.id);
     if (!advogado) {
-      return res.status(404).json({ erro: { codigo: 'ADVOGADO_NAO_ENCONTRADO', mensagem: 'Advogado não encontrado.' } });
+      return res.status(404).json({ erro: { codigo: 'ADVOGADO_NAO_ENCONTRADO', mensagem: 'Advogado nÃ£o encontrado.' } });
     }
     
     await advogado.update({ ativo: false });
@@ -318,9 +402,13 @@ router.delete('/advogados/:id', async (req: Request, res: Response) => {
 router.get('/processos', async (req: Request, res: Response) => {
   try {
     const { advogadoId, tribunalId, status, pagina = 1, limite = 50 } = req.query;
+    const scoped = resolveScopedAdvogadoId(req, typeof advogadoId === 'string' ? advogadoId : undefined);
+    if (!scoped.ok) {
+      return res.status(scoped.status).json(scoped.body);
+    }
     
     const where: any = {};
-    if (advogadoId) where.advogadoId = advogadoId;
+    if (scoped.advogadoId) where.advogadoId = scoped.advogadoId;
     if (tribunalId) where.tribunalId = tribunalId;
     if (status) where.status = status;
     
@@ -354,6 +442,11 @@ router.get('/processos', async (req: Request, res: Response) => {
 
 router.get('/processos/:id', async (req: Request, res: Response) => {
   try {
+    const access = await ensureProcessAccess(req, req.params.id);
+    if (access.status) {
+      return res.status(access.status).json(access.body);
+    }
+
     const processo = await Processo.findByPk(req.params.id, {
       include: [
         { model: Advogado, as: 'advogado' },
@@ -364,7 +457,7 @@ router.get('/processos/:id', async (req: Request, res: Response) => {
     });
     
     if (!processo) {
-      return res.status(404).json({ erro: { codigo: 'PROCESSO_NAO_ENCONTRADO', mensagem: 'Processo não encontrado.' } });
+      return res.status(404).json({ erro: { codigo: 'PROCESSO_NAO_ENCONTRADO', mensagem: 'Processo nÃ£o encontrado.' } });
     }
     
     res.json({ processo });
@@ -375,10 +468,14 @@ router.get('/processos/:id', async (req: Request, res: Response) => {
 
 router.get('/processos/:id/enriquecimento/firecrawl', async (req: Request, res: Response) => {
   try {
-    const processo = await Processo.findByPk(req.params.id);
+    const access = await ensureProcessAccess(req, req.params.id);
+    if (access.status) {
+      return res.status(access.status).json(access.body);
+    }
+    const processo = access.processo!;
 
     if (!processo) {
-      return res.status(404).json({ erro: { codigo: 'PROCESSO_NAO_ENCONTRADO', mensagem: 'Processo não encontrado.' } });
+      return res.status(404).json({ erro: { codigo: 'PROCESSO_NAO_ENCONTRADO', mensagem: 'Processo nÃ£o encontrado.' } });
     }
 
     const dadosOriginais = (processo.dadosOriginais ?? {}) as Record<string, unknown>;
@@ -401,7 +498,7 @@ router.post('/processos/:id/enriquecimento/firecrawl', async (req: Request, res:
       return res.status(503).json({
         erro: {
           codigo: 'FIRECRAWL_DISABLED',
-          mensagem: 'Firecrawl está desativado. Defina FIRECRAWL_ENABLED=true para usar enriquecimento auxiliar.',
+          mensagem: 'Firecrawl estÃ¡ desativado. Defina FIRECRAWL_ENABLED=true para usar enriquecimento auxiliar.',
         },
       });
     }
@@ -415,11 +512,11 @@ router.post('/processos/:id/enriquecimento/firecrawl', async (req: Request, res:
       });
     }
 
-    const processo = await Processo.findByPk(req.params.id);
-
-    if (!processo) {
-      return res.status(404).json({ erro: { codigo: 'PROCESSO_NAO_ENCONTRADO', mensagem: 'Processo não encontrado.' } });
+    const access = await ensureProcessAccess(req, req.params.id);
+    if (access.status) {
+      return res.status(access.status).json(access.body);
     }
+    const processo = access.processo!;
 
     const { urls, forceRefresh, onlyMainContent, requestedBy } = req.body;
     let urlsNormalizadas: string[];
@@ -504,12 +601,16 @@ router.post('/processos/:id/enriquecimento/firecrawl', async (req: Request, res:
 router.post('/processos', async (req: Request, res: Response) => {
   try {
     const { numeroProcesso, tribunalId, advogadoId, classe, assunto } = req.body;
+    const scoped = resolveScopedAdvogadoId(req, advogadoId);
+    if (!scoped.ok) {
+      return res.status(scoped.status).json(scoped.body);
+    }
     
-    if (!numeroProcesso || !tribunalId || !advogadoId) {
+    if (!numeroProcesso || !tribunalId || !scoped.advogadoId) {
       return res.status(400).json({ 
         erro: { 
           codigo: 'VALIDATION_ERROR', 
-          mensagem: 'Número do processo, tribunal e advogado são obrigatórios.' 
+          mensagem: 'NÃºmero do processo, tribunal e advogado sÃ£o obrigatÃ³rios.' 
         } 
       });
     }
@@ -519,7 +620,7 @@ router.post('/processos', async (req: Request, res: Response) => {
       return res.status(409).json({ 
         erro: { 
           codigo: 'DUPLICATE_PROCESSO', 
-          mensagem: 'Este processo já está cadastrado.' 
+          mensagem: 'Este processo jÃ¡ estÃ¡ cadastrado.' 
         } 
       });
     }
@@ -527,7 +628,7 @@ router.post('/processos', async (req: Request, res: Response) => {
     const processo = await Processo.create({ 
       numeroProcesso, 
       tribunalId, 
-      advogadoId, 
+      advogadoId: scoped.advogadoId, 
       classe, 
       assunto,
       instancia: 'PRIMEIRA',
@@ -536,7 +637,7 @@ router.post('/processos', async (req: Request, res: Response) => {
     
     // Create initial monitoramento
     await Monitoramento.create({
-      advogadoId,
+      advogadoId: scoped.advogadoId,
       processoId: processo.id,
       intervaloMinutos: DEFAULT_PROCESS_MONITORING_INTERVAL_MINUTES,
       ativo: true,
@@ -550,10 +651,11 @@ router.post('/processos', async (req: Request, res: Response) => {
 
 router.delete('/processos/:id', async (req: Request, res: Response) => {
   try {
-    const processo = await Processo.findByPk(req.params.id);
-    if (!processo) {
-      return res.status(404).json({ erro: { codigo: 'PROCESSO_NAO_ENCONTRADO', mensagem: 'Processo não encontrado.' } });
+    const access = await ensureProcessAccess(req, req.params.id);
+    if (access.status) {
+      return res.status(access.status).json(access.body);
     }
+    const processo = access.processo!;
     
     await Monitoramento.destroy({ where: { processoId: req.params.id } });
     await processo.destroy();
@@ -564,10 +666,14 @@ router.delete('/processos/:id', async (req: Request, res: Response) => {
   }
 });
 
-// ==================== MOVIMENTAÇÕES ====================
+// ==================== MOVIMENTAÃ‡Ã•ES ====================
 
 router.get('/processos/:id/movimentacoes', async (req: Request, res: Response) => {
   try {
+    const access = await ensureProcessAccess(req, req.params.id);
+    if (access.status) {
+      return res.status(access.status).json(access.body);
+    }
     const { pagina = 1, limite = 50, data_inicio, data_fim } = req.query;
     
     const where: any = { processoId: req.params.id };
@@ -597,12 +703,16 @@ router.get('/processos/:id/movimentacoes', async (req: Request, res: Response) =
       },
     });
   } catch (error) {
-    res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar movimentações.' } });
+    res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar movimentaÃ§Ãµes.' } });
   }
 });
 
 router.get('/processos/:id/movimentacoes/novas', async (req: Request, res: Response) => {
   try {
+    const access = await ensureProcessAccess(req, req.params.id);
+    if (access.status) {
+      return res.status(access.status).json(access.body);
+    }
     const movimentacoes = await Movimentacao.findAll({
       where: { processoId: req.params.id, nova: true },
       order: [['data', 'DESC']],
@@ -616,12 +726,16 @@ router.get('/processos/:id/movimentacoes/novas', async (req: Request, res: Respo
     
     res.json({ movimentacoes });
   } catch (error) {
-    res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar movimentações.' } });
+    res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar movimentaÃ§Ãµes.' } });
   }
 });
 
 router.get('/processos/:id/partes', async (req: Request, res: Response) => {
   try {
+    const access = await ensureProcessAccess(req, req.params.id);
+    if (access.status) {
+      return res.status(access.status).json(access.body);
+    }
     const partes = await Parte.findAll({
       where: { processoId: req.params.id },
       order: [['tipo', 'ASC'], ['nome', 'ASC']],
@@ -638,9 +752,13 @@ router.get('/processos/:id/partes', async (req: Request, res: Response) => {
 router.get('/monitoramentos', async (req: Request, res: Response) => {
   try {
     const { advogadoId, ativo } = req.query;
-    
+    const scoped = resolveScopedAdvogadoId(req, typeof advogadoId === 'string' ? advogadoId : undefined);
+    if (!scoped.ok) {
+      return res.status(scoped.status).json(scoped.body);
+    }
+
     const where: any = {};
-    if (advogadoId) where.advogadoId = advogadoId;
+    if (scoped.advogadoId) where.advogadoId = scoped.advogadoId;
     if (ativo !== undefined) where.ativo = ativo === 'true';
     
     const monitoramentos = await Monitoramento.findAll({
@@ -661,10 +779,11 @@ router.post('/processos/:id/monitorar', async (req: Request, res: Response) => {
   try {
     const intervaloMinutos = normalizeProcessMonitoringInterval(req.body?.intervaloMinutos);
     
-    const processo = await Processo.findByPk(req.params.id);
-    if (!processo) {
-      return res.status(404).json({ erro: { codigo: 'PROCESSO_NAO_ENCONTRADO', mensagem: 'Processo não encontrado.' } });
+    const access = await ensureProcessAccess(req, req.params.id);
+    if (access.status) {
+      return res.status(access.status).json(access.body);
     }
+    const processo = access.processo!;
     
     const existingMonitoramento = await Monitoramento.findOne({
       where: { processoId: req.params.id, ativo: true },
@@ -677,7 +796,7 @@ router.post('/processos/:id/monitorar', async (req: Request, res: Response) => {
 
     if (!processo.advogadoId) {
       return res.status(400).json({
-        erro: { codigo: 'ADVOGADO_NAO_ASSOCIADO', mensagem: 'Processo não tem advogado associado.' }
+        erro: { codigo: 'ADVOGADO_NAO_ASSOCIADO', mensagem: 'Processo nÃ£o tem advogado associado.' }
       });
     }
 
@@ -696,12 +815,17 @@ router.post('/processos/:id/monitorar', async (req: Request, res: Response) => {
 
 router.delete('/processos/:id/monitorar', async (req: Request, res: Response) => {
   try {
+    const access = await ensureProcessAccess(req, req.params.id);
+    if (access.status) {
+      return res.status(access.status).json(access.body);
+    }
+
     const monitoramento = await Monitoramento.findOne({
       where: { processoId: req.params.id, ativo: true },
     });
     
     if (!monitoramento) {
-      return res.status(404).json({ erro: { codigo: 'MONITORAMENTO_NAO_ENCONTRADO', mensagem: 'Monitoramento não encontrado.' } });
+      return res.status(404).json({ erro: { codigo: 'MONITORAMENTO_NAO_ENCONTRADO', mensagem: 'Monitoramento nÃ£o encontrado.' } });
     }
     
     await monitoramento.update({ ativo: false });
@@ -720,6 +844,7 @@ router.get('/tribunais', async (req: Request, res: Response) => {
     // Try cache first
     const cached = await cache.get(cacheKey);
     if (cached) {
+      res.locals.cacheHit = true;
       return res.json({ tribunais: JSON.parse(cached), cached: true });
     }
 
@@ -730,6 +855,7 @@ router.get('/tribunais', async (req: Request, res: Response) => {
 
     // Cache the result
     await cache.set(cacheKey, JSON.stringify(tribunais), CACHE_TTL.TRIBUNAL_STATUS);
+    res.locals.cacheHit = false;
 
     res.set('Cache-Control', 'public, max-age=300');
     res.json({ tribunais });
@@ -739,23 +865,27 @@ router.get('/tribunais', async (req: Request, res: Response) => {
   }
 });
 
-// ==================== TRIBUNAIS - INTEGRAÇÃO ====================
+// ==================== TRIBUNAIS - INTEGRAÃ‡ÃƒO ====================
 
 router.post('/tribunais/:codigo/buscar', async (req: Request, res: Response) => {
   try {
     const { codigo } = req.params;
     const { numeroProcesso, advogadoId } = req.body;
+    const scoped = resolveScopedAdvogadoId(req, advogadoId);
+    if (!scoped.ok) {
+      return res.status(scoped.status).json(scoped.body);
+    }
     
     if (!numeroProcesso) {
       return res.status(400).json({
-        erro: { codigo: 'VALIDATION_ERROR', mensagem: 'Número do processo é obrigatório.' }
+        erro: { codigo: 'VALIDATION_ERROR', mensagem: 'NÃºmero do processo Ã© obrigatÃ³rio.' }
       });
     }
     
     const resultado = await TribunalService.buscarESalvarProcesso(
       numeroProcesso,
       codigo.toUpperCase(),
-      advogadoId
+      scoped.advogadoId
     );
     
     res.json({
@@ -766,7 +896,7 @@ router.post('/tribunais/:codigo/buscar', async (req: Request, res: Response) => 
       novasMovimentacoes: resultado.novasMovimentacoes,
     });
   } catch (error: any) {
-    if (error.message.includes('não suportado') || error.message.includes('não encontrado')) {
+    if (error.message.includes('nÃ£o suportado') || error.message.includes('nÃ£o encontrado')) {
       return res.status(400).json({ erro: { codigo: 'TRIBUNAL_ERROR', mensagem: error.message } });
     }
     res.status(500).json({ erro: { codigo: 'SCRAPE_ERROR', mensagem: 'Erro ao buscar processo.' } });
@@ -777,10 +907,14 @@ router.post('/tribunais/:codigo/buscar-oab', async (req: Request, res: Response)
   try {
     const { codigo } = req.params;
     const { oab, nome, advogadoId, forceRefresh, limiteProcessos, onlyMissing } = req.body;
+    const scoped = resolveScopedAdvogadoId(req, advogadoId);
+    if (!scoped.ok) {
+      return res.status(scoped.status).json(scoped.body);
+    }
 
     if (!oab) {
       return res.status(400).json({
-        erro: { codigo: 'VALIDATION_ERROR', mensagem: 'OAB é obrigatória.' }
+        erro: { codigo: 'VALIDATION_ERROR', mensagem: 'OAB Ã© obrigatÃ³ria.' }
       });
     }
 
@@ -790,7 +924,7 @@ router.post('/tribunais/:codigo/buscar-oab', async (req: Request, res: Response)
 
     if (!adapter) {
       return res.status(400).json({
-        erro: { codigo: 'TRIBUNAL_NOT_SUPPORTED', mensagem: `Tribunal não suportado: ${codigo}` }
+        erro: { codigo: 'TRIBUNAL_NOT_SUPPORTED', mensagem: `Tribunal nÃ£o suportado: ${codigo}` }
       });
     }
 
@@ -799,7 +933,7 @@ router.post('/tribunais/:codigo/buscar-oab', async (req: Request, res: Response)
       oab,
       codigo.toUpperCase(),
       nome,
-      advogadoId,
+      scoped.advogadoId,
       forceRefresh === true,
       typeof limiteProcessos === 'number' ? limiteProcessos : undefined,
       onlyMissing === true
@@ -807,12 +941,15 @@ router.post('/tribunais/:codigo/buscar-oab', async (req: Request, res: Response)
 
     const fontes = resultado.fontes || [];
     const fonteBloqueante = fontes.find(fonte =>
-      ['requires-auth', 'captcha', 'blocked'].includes(fonte.status)
+      ['requires-auth', 'captcha', 'blocked', 'source_unavailable'].includes(fonte.status)
     );
     const status: BuscaOABStatus = resultado.processos.length > 0
       ? 'success'
       : ((fonteBloqueante?.status as BuscaOABStatus | undefined) || 'empty');
     const acaoRequerida = buildAcaoRequerida(fonteBloqueante);
+
+    res.locals.cacheHit = resultado.doCache;
+    res.locals.resultStatus = status;
 
     res.json({
       sucesso: true,
@@ -837,14 +974,19 @@ router.post('/tribunais/:codigo/buscar-oab/async', async (req: Request, res: Res
   try {
     const { codigo } = req.params;
     const { oab, nome, advogadoId, requestedBy } = req.body;
+    const scoped = resolveScopedAdvogadoId(req, advogadoId);
+    if (!scoped.ok) {
+      return res.status(scoped.status).json(scoped.body);
+    }
+    const scopedAdvogadoId = scoped.advogadoId;
     const tribunalCodigo = codigo.toUpperCase();
     const buscaNacional = ALL_TRIBUNALS_CODES.has(tribunalCodigo);
 
-    if (!oab || !advogadoId) {
+    if (!oab || !scopedAdvogadoId) {
       return res.status(400).json({
         erro: {
           codigo: 'VALIDATION_ERROR',
-          mensagem: 'OAB e advogadoId são obrigatórios para busca assíncrona.',
+          mensagem: 'OAB e advogadoId sÃ£o obrigatÃ³rios para busca assÃ­ncrona.',
         },
       });
     }
@@ -864,18 +1006,18 @@ router.post('/tribunais/:codigo/buscar-oab/async', async (req: Request, res: Res
 
     if (!buscaNacional && !tribunaisDisponiveis.has(tribunalCodigo)) {
       return res.status(400).json({
-        erro: { codigo: 'TRIBUNAL_NOT_SUPPORTED', mensagem: `Tribunal não suportado: ${codigo}` },
+        erro: { codigo: 'TRIBUNAL_NOT_SUPPORTED', mensagem: `Tribunal nÃ£o suportado: ${codigo}` },
       });
     }
 
-    const advogado = await Advogado.findByPk(advogadoId);
+    const advogado = await Advogado.findByPk(scopedAdvogadoId);
     if (!advogado) {
       return res.status(404).json({
-        erro: { codigo: 'ADVOGADO_NAO_ENCONTRADO', mensagem: 'Advogado não encontrado.' },
+        erro: { codigo: 'ADVOGADO_NAO_ENCONTRADO', mensagem: 'Advogado nÃ£o encontrado.' },
       });
     }
 
-    const correlationId = `${advogadoId}:${buscaNacional ? 'TODOS' : tribunalCodigo}:${Date.now()}`;
+    const correlationId = `${scopedAdvogadoId}:${buscaNacional ? 'TODOS' : tribunalCodigo}:${Date.now()}`;
 
     auditJob = await Job.create({
       tipo: 'SCRAPE',
@@ -885,7 +1027,7 @@ router.post('/tribunais/:codigo/buscar-oab/async', async (req: Request, res: Res
       maxTentativas: 3,
       payload: {
         mode: 'oab_crawl',
-        advogadoId,
+        advogadoId: scopedAdvogadoId,
         oab: oabNormalizada,
         nome,
         tribunalCodigo: buscaNacional ? 'TODOS' : tribunalCodigo,
@@ -896,7 +1038,7 @@ router.post('/tribunais/:codigo/buscar-oab/async', async (req: Request, res: Res
     });
 
     const queueJob = await agendarOABCrawl({
-      advogadoId,
+      advogadoId: scopedAdvogadoId,
       oab: oabNormalizada,
       nome,
       tribunais: tribunaisAlvo,
@@ -922,8 +1064,8 @@ router.post('/tribunais/:codigo/buscar-oab/async', async (req: Request, res: Res
       tribunais: tribunaisAlvo,
       totalTribunais: tribunaisAlvo.length,
       mensagem: buscaNacional
-        ? `Busca nacional por OAB agendada em ${tribunaisAlvo.length} tribunais. Os processos serão salvos em background.`
-        : 'Busca por OAB agendada. Os processos serão salvos em background.',
+        ? `Busca nacional por OAB agendada em ${tribunaisAlvo.length} tribunais. Os processos serÃ£o salvos em background.`
+        : 'Busca por OAB agendada. Os processos serÃ£o salvos em background.',
     });
   } catch (error: any) {
     if (auditJob) {
@@ -950,8 +1092,16 @@ router.post('/tribunais/:codigo/processos/:numero/refresh', async (req: Request,
     
     if (!processo) {
       return res.status(404).json({
-        erro: { codigo: 'PROCESSO_NAO_ENCONTRADO', mensagem: 'Processo não encontrado.' }
+        erro: { codigo: 'PROCESSO_NAO_ENCONTRADO', mensagem: 'Processo nÃ£o encontrado.' }
       });
+    }
+    if (!isElevatedRole(req)) {
+      const actorAdvogadoId = getActorAdvogadoId(req);
+      if (!actorAdvogadoId || processo.advogadoId !== actorAdvogadoId) {
+        return res.status(403).json({
+          erro: { codigo: 'FORBIDDEN', mensagem: 'Acesso negado ao processo solicitado.' },
+        });
+      }
     }
     
     const resultado = await TribunalService.atualizarProcesso(processo.id);
@@ -975,7 +1125,7 @@ router.get('/tribunais/:codigo/status', async (req: Request, res: Response) => {
     
     if (!adapter) {
       return res.status(400).json({
-        erro: { codigo: 'TRIBUNAL_NOT_SUPPORTED', mensagem: `Tribunal não suportado: ${codigo}` }
+        erro: { codigo: 'TRIBUNAL_NOT_SUPPORTED', mensagem: `Tribunal nÃ£o suportado: ${codigo}` }
       });
     }
     
@@ -993,7 +1143,7 @@ router.get('/tribunais/:codigo/status', async (req: Request, res: Response) => {
 
 // ==================== JOBS ====================
 
-router.get('/jobs', async (req: Request, res: Response) => {
+router.get('/jobs', requireRole('ADMIN'), async (req: Request, res: Response) => {
   try {
     const { status, tipo, limite = 50 } = req.query;
 
@@ -1015,14 +1165,14 @@ router.get('/jobs', async (req: Request, res: Response) => {
   }
 });
 
-router.get('/jobs/:id', async (req: Request, res: Response) => {
+router.get('/jobs/:id', requireRole('ADMIN'), async (req: Request, res: Response) => {
   try {
     const job = await Job.findByPk(req.params.id, {
       include: [{ model: Processo, as: 'processo' }],
     });
 
     if (!job) {
-      return res.status(404).json({ erro: { codigo: 'JOB_NOT_FOUND', mensagem: 'Job não encontrado.' } });
+      return res.status(404).json({ erro: { codigo: 'JOB_NOT_FOUND', mensagem: 'Job nÃ£o encontrado.' } });
     }
 
     res.json({ job });
@@ -1031,12 +1181,12 @@ router.get('/jobs/:id', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/jobs/:id/retry', async (req: Request, res: Response) => {
+router.post('/jobs/:id/retry', requireRole('ADMIN'), async (req: Request, res: Response) => {
   try {
     const job = await Job.findByPk(req.params.id);
 
     if (!job) {
-      return res.status(404).json({ erro: { codigo: 'JOB_NOT_FOUND', mensagem: 'Job não encontrado.' } });
+      return res.status(404).json({ erro: { codigo: 'JOB_NOT_FOUND', mensagem: 'Job nÃ£o encontrado.' } });
     }
 
     await job.update({ status: 'PENDENTE', tentativas: 0, erro: undefined });
@@ -1052,9 +1202,13 @@ router.post('/jobs/:id/retry', async (req: Request, res: Response) => {
 router.get('/notifications', async (req: Request, res: Response) => {
   try {
     const { advogadoId, lida, limite = 50 } = req.query;
+    const scoped = resolveScopedAdvogadoId(req, typeof advogadoId === 'string' ? advogadoId : undefined);
+    if (!scoped.ok) {
+      return res.status(scoped.status).json(scoped.body);
+    }
 
     const where: any = {};
-    if (advogadoId) where.advogadoId = advogadoId;
+    if (scoped.advogadoId) where.advogadoId = scoped.advogadoId;
     if (lida !== undefined) where.lida = lida === 'true';
 
     const notifications = await Notification.findAll({
@@ -1074,7 +1228,13 @@ router.put('/notifications/:id/read', async (req: Request, res: Response) => {
     const notification = await Notification.findByPk(req.params.id);
 
     if (!notification) {
-      return res.status(404).json({ erro: { codigo: 'NOTIFICATION_NOT_FOUND', mensagem: 'Notificação não encontrada.' } });
+      return res.status(404).json({ erro: { codigo: 'NOTIFICATION_NOT_FOUND', mensagem: 'NotificaÃ§Ã£o nÃ£o encontrada.' } });
+    }
+    if (!isElevatedRole(req)) {
+      const actorAdvogadoId = getActorAdvogadoId(req);
+      if (!actorAdvogadoId || notification.advogadoId !== actorAdvogadoId) {
+        return res.status(403).json({ erro: { codigo: 'FORBIDDEN', mensagem: 'Acesso negado à notificação.' } });
+      }
     }
 
     await notification.update({ lida: true });
@@ -1087,9 +1247,13 @@ router.put('/notifications/:id/read', async (req: Request, res: Response) => {
 router.put('/notifications/read-all', async (req: Request, res: Response) => {
   try {
     const { advogadoId } = req.query;
+    const scoped = resolveScopedAdvogadoId(req, typeof advogadoId === 'string' ? advogadoId : undefined);
+    if (!scoped.ok) {
+      return res.status(scoped.status).json(scoped.body);
+    }
 
     const where: any = { lida: false };
-    if (advogadoId) where.advogadoId = advogadoId;
+    if (scoped.advogadoId) where.advogadoId = scoped.advogadoId;
 
     await Notification.update({ lida: true }, { where });
     res.json({ mensagem: 'Todas marcadas como lidas.' });
@@ -1104,8 +1268,12 @@ router.get('/advogados/:id/processos', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { tribunalId, status, limite = 50 } = req.query;
+    const scoped = resolveScopedAdvogadoId(req, id);
+    if (!scoped.ok) {
+      return res.status(scoped.status).json(scoped.body);
+    }
 
-    const where: any = { advogadoId: id };
+    const where: any = { advogadoId: scoped.advogadoId || id };
     if (tribunalId) where.tribunalId = tribunalId;
     if (status) where.status = status;
 
@@ -1131,16 +1299,31 @@ router.get('/advogados/:id/processos', async (req: Request, res: Response) => {
 router.get('/dashboard/stats', async (req: Request, res: Response) => {
   try {
     const { advogadoId } = req.query;
+    const scoped = resolveScopedAdvogadoId(req, typeof advogadoId === 'string' ? advogadoId : undefined);
+    if (!scoped.ok) {
+      return res.status(scoped.status).json(scoped.body);
+    }
+    const scopedAdvogadoId = scoped.advogadoId;
 
     const whereAdv: any = { ativo: true };
-    if (advogadoId) whereAdv.id = advogadoId;
+    if (scopedAdvogadoId) whereAdv.id = scopedAdvogadoId;
 
     const [totalAdvogados, totalProcessos, jobsPendentes, jobsFalhos, monitoramentosAtivos] = await Promise.all([
       Advogado.count({ where: whereAdv }),
-      Processo.count({ where: advogadoId ? { advogadoId: String(advogadoId) } : {} }),
-      Job.count({ where: { status: 'PENDENTE' } }),
-      Job.count({ where: { status: 'FALHO' } }),
-      Monitoramento.count({ where: { ativo: true } }),
+      Processo.count({ where: scopedAdvogadoId ? { advogadoId: scopedAdvogadoId } : {} }),
+      scopedAdvogadoId
+        ? Job.count({
+          where: { status: 'PENDENTE' },
+          include: [{ model: Processo, as: 'processo', where: { advogadoId: scopedAdvogadoId }, required: true }],
+        })
+        : Job.count({ where: { status: 'PENDENTE' } }),
+      scopedAdvogadoId
+        ? Job.count({
+          where: { status: 'FALHO' },
+          include: [{ model: Processo, as: 'processo', where: { advogadoId: scopedAdvogadoId }, required: true }],
+        })
+        : Job.count({ where: { status: 'FALHO' } }),
+      Monitoramento.count({ where: scopedAdvogadoId ? { ativo: true, advogadoId: scopedAdvogadoId } : { ativo: true } }),
     ]);
 
     const totalMovimentacoesHoje = await Movimentacao.count({
@@ -1149,6 +1332,12 @@ router.get('/dashboard/stats', async (req: Request, res: Response) => {
           [Op.gte]: new Date(new Date().setHours(0, 0, 0, 0)),
         },
       },
+      include: scopedAdvogadoId ? [{
+        model: Processo,
+        as: 'processo',
+        where: { advogadoId: scopedAdvogadoId },
+        attributes: [],
+      }] : [],
     });
 
     res.json({
@@ -1161,8 +1350,68 @@ router.get('/dashboard/stats', async (req: Request, res: Response) => {
     });
   } catch (error) {
     logRouteError(req, 'GET /dashboard/stats', error);
-    res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar estatísticas.' } });
+    res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar estatÃ­sticas.' } });
   }
 });
 
+// ==================== ADMIN ====================
+
+router.get('/admin/advogados', requireRole('ADMIN'), async (_req: Request, res: Response) => {
+  const advogados = await Advogado.findAll({ order: [['nome', 'ASC']] });
+  res.json({ advogados });
+});
+
+router.get('/admin/monitoramentos', requireRole('ADMIN'), async (_req: Request, res: Response) => {
+  const monitoramentos = await Monitoramento.findAll({
+    include: [
+      { model: Processo, as: 'processo' },
+      { model: Advogado, as: 'advogado' },
+    ],
+    order: [['updatedAt', 'DESC']],
+  });
+  res.json({ monitoramentos });
+});
+
+router.get('/admin/notifications', requireRole('ADMIN'), async (req: Request, res: Response) => {
+  const limite = Number(req.query.limite || 100);
+  const notifications = await Notification.findAll({
+    order: [['createdAt', 'DESC']],
+    limit: limite,
+  });
+  res.json({ notifications });
+});
+
+router.get('/admin/dashboard/stats', requireRole('ADMIN'), async (req: Request, res: Response) => {
+  const { advogadoId } = req.query;
+  const whereAdv: any = { ativo: true };
+  if (advogadoId) whereAdv.id = advogadoId;
+
+  const [totalAdvogados, totalProcessos, jobsPendentes, jobsFalhos, monitoramentosAtivos] = await Promise.all([
+    Advogado.count({ where: whereAdv }),
+    Processo.count({ where: advogadoId ? { advogadoId: String(advogadoId) } : {} }),
+    Job.count({ where: { status: 'PENDENTE' } }),
+    Job.count({ where: { status: 'FALHO' } }),
+    Monitoramento.count({ where: { ativo: true } }),
+  ]);
+
+  const totalMovimentacoesHoje = await Movimentacao.count({
+    where: { createdAt: { [Op.gte]: new Date(new Date().setHours(0, 0, 0, 0)) } },
+  });
+
+  res.json({
+    totalAdvogados,
+    totalProcessos,
+    jobsPendentes,
+    jobsFalhos,
+    monitoramentosAtivos,
+    totalMovimentacoesHoje,
+  });
+});
+
 export { router };
+
+
+
+
+
+

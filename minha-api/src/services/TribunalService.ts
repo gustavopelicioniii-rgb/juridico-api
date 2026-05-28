@@ -471,7 +471,6 @@ class TribunalService {
     const inicio = Date.now();
     const oabNormalizada = oab.toUpperCase().replace(/\s/g, '');
     const oabCacheKeys = buildOABCacheKeys(oabNormalizada);
-    const buscaComFiltroNome = Boolean(nome?.trim());
     const buscaLimitada = typeof limiteProcessos === 'number' && limiteProcessos > 0;
     const carregarProcessos = (numeros: string[]) =>
       Processo.findAll({
@@ -482,7 +481,7 @@ class TribunalService {
         ],
       });
 
-    if (forceRefresh || onlyMissing || buscaComFiltroNome) {
+    if (forceRefresh || onlyMissing) {
       for (const cacheKey of oabCacheKeys) {
         oabCacheService.invalidate(cacheKey, tribunalCodigo);
       }
@@ -495,7 +494,7 @@ class TribunalService {
     }
 
     // ===== L1: Cache em memória (verifica primeiro - mais rápido) =====
-    if (!forceRefresh && !onlyMissing && !buscaComFiltroNome && !buscaLimitada) {
+    if (!forceRefresh && !onlyMissing && !buscaLimitada) {
       const entryL1 = oabCacheService.get(oabNormalizada, tribunalCodigo);
       if (entryL1) {
         logger.info(`[Cache OAB] L1 HIT para ${oabNormalizada} em ${tribunalCodigo}`);
@@ -511,7 +510,7 @@ class TribunalService {
     }
 
     // ===== L2: Cache de banco (se L1 miss) =====
-    if (!forceRefresh && !onlyMissing && !buscaComFiltroNome && !buscaLimitada) {
+    if (!forceRefresh && !onlyMissing && !buscaLimitada) {
       const cacheEntryL2 = await OABBuscaCache.findOne({
         where: {
           oab: oabNormalizada,
@@ -643,7 +642,7 @@ class TribunalService {
     // Salva nos dois níveis de cache
     const ttlMs = CACHE_TTL_MINUTES * 60 * 1000;
 
-    if (!buscaComFiltroNome && !buscaLimitada && !onlyMissing) {
+    if (!buscaLimitada && !onlyMissing) {
       // L1: Cache em memória
       oabCacheService.set(oabNormalizada, tribunalCodigo, numerosProcessos, ttlMs, nome, resumoOab);
 

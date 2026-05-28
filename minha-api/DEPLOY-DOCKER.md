@@ -23,6 +23,8 @@ Serviços:
 | redis     | —     | Só rede Docker (`redis:6379`)          |
 | worker    | —     | Processamento de filas |
 
+> Produção recomendada: manter `ENABLE_MONITORING=false` e `ENABLE_OAB_MONITORING=false` no `api`, e `true` no `worker`.
+
 ## Verificar
 
 ```bash

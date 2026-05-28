@@ -9,9 +9,12 @@ import Monitoramento from './Monitoramento';
 import Notification from './Notification';
 import OABMonitorada from './OABMonitorada';
 import OABBuscaCache from './OABBuscaCache';
+import ApiUsage from './ApiUsage';
 
 Advogado.hasMany(Notification, { foreignKey: 'advogadoId', as: 'notifications' });
 Notification.belongsTo(Advogado, { foreignKey: 'advogadoId', as: 'advogado' });
+Advogado.hasMany(ApiUsage, { foreignKey: 'advogadoId', as: 'apiUsage' });
+ApiUsage.belongsTo(Advogado, { foreignKey: 'advogadoId', as: 'advogado' });
 
 // Define Associations
 Advogado.hasMany(Processo, { foreignKey: 'advogadoId', as: 'processos' });
@@ -47,6 +50,7 @@ export {
   Notification,
   OABMonitorada,
   OABBuscaCache,
+  ApiUsage,
 };
 
 export default {
@@ -60,4 +64,5 @@ export default {
   Notification,
   OABMonitorada,
   OABBuscaCache,
+  ApiUsage,
 };

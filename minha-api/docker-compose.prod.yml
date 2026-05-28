@@ -16,6 +16,8 @@ services:
       - PORT=3000
       - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/juridico
       - REDIS_URL=redis://redis:6379
+      - ENABLE_MONITORING=false
+      - ENABLE_OAB_MONITORING=false
     depends_on:
       postgres:
         condition: service_started
@@ -38,6 +40,8 @@ services:
       - NODE_ENV=production
       - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/juridico
       - REDIS_URL=redis://redis:6379
+      - ENABLE_MONITORING=true
+      - ENABLE_OAB_MONITORING=true
     depends_on:
       postgres:
         condition: service_started

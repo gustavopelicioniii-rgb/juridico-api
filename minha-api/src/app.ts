@@ -1,4 +1,4 @@
-import express, { Application, Request, Response, NextFunction } from 'express';
+﻿import express, { Application, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -23,13 +23,15 @@ import ngrokService from './services/NgrokService';
 import oabCacheService from './services/OABCacheService';
 import { listarTribunaisDataJud } from './config/datajudTribunais';
 import { DEFAULT_MONITORING_POLL_INTERVAL_MS } from './config/monitoring';
+import { validateDataJudProductionConfig } from './config/datajud';
+import DataJudHealthService from './services/DataJudHealthService';
 
 dotenv.config();
 
 const app: Application = express();
 const PORT = process.env.PORT || 3000;
 
-// Necessário atrás de ngrok/proxies para rate-limit usar o IP correto.
+// NecessÃ¡rio atrÃ¡s de ngrok/proxies para rate-limit usar o IP correto.
 app.set('trust proxy', 1);
 
 // Criar servidor HTTP para integrar com Socket.IO
@@ -54,11 +56,11 @@ app.use(helmet({
 // Compression
 app.use(compression());
 
-// CORS restrito — apenas origens conhecidas em produção
+// CORS restrito â€” apenas origens conhecidas em produÃ§Ã£o
 const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173,http://localhost:5174,http://localhost:3000').split(',');
 app.use(cors({
   origin: (origin, callback) => {
-    // Permite requisições sem Origin (curl, Postman) em dev
+    // Permite requisiÃ§Ãµes sem Origin (curl, Postman) em dev
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
@@ -83,7 +85,7 @@ const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: Number(process.env.API_RATE_LIMIT_MAX || 1000),
   message: {
-    erro: { codigo: 'RATE_LIMIT_EXCEDIDO', mensagem: 'Muitas requisições. Tente novamente em alguns minutos.' },
+    erro: { codigo: 'RATE_LIMIT_EXCEDIDO', mensagem: 'Muitas requisiÃ§Ãµes. Tente novamente em alguns minutos.' },
   },
 });
 
@@ -120,6 +122,7 @@ app.get('/health', (_req: Request, res: Response) => {
 app.get('/api/v1/health', async (_req: Request, res: Response) => {
   try {
     await sequelize.authenticate();
+    const dataJud = await DataJudHealthService.smokeCheck();
     res.json({
       status: 'ok',
       version: '1.0.0',
@@ -130,11 +133,13 @@ app.get('/api/v1/health', async (_req: Request, res: Response) => {
         websocket: notificationService.getConnectedClientsCount() >= 0 ? 'ok' : 'degraded',
         ngrok: ngrokService.isActive() ? 'ok' : 'inativo',
         oabCache: oabCacheService.getStats().tamanho >= 0 ? 'ok' : 'erro',
+        datajud: dataJud.ok ? 'ok' : 'degraded',
       },
+      dataJud,
       ngrokUrl: ngrokService.getUrl(),
       oabCacheStats: oabCacheService.getStats(),
     });
-  } catch (error) {
+  } catch {
     res.status(503).json({
       status: 'error',
       version: '1.0.0',
@@ -205,12 +210,12 @@ app.use((_req: Request, res: Response) => {
   res.status(404).json({
     erro: {
       codigo: 'ROUTE_NOT_FOUND',
-      mensagem: 'Endpoint não encontrado.',
+      mensagem: 'Endpoint nÃ£o encontrado.',
     },
   });
 });
 
-// Error handler com diferenciação de tipos
+// Error handler com diferenciaÃ§Ã£o de tipos
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   const requestId = (_req as any).requestId;
 
@@ -219,7 +224,7 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
     res.status(400).json({
       erro: {
         codigo: 'VALIDATION_ERROR',
-        mensagem: 'Dados inválidos.',
+        mensagem: 'Dados invÃ¡lidos.',
         detalhes: err.issues.map((e: z.ZodIssue) => ({ campo: e.path.join('.'), mensagem: e.message })),
         requestId,
       },
@@ -267,7 +272,7 @@ const gracefulShutdown = async (signal: string) => {
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
-// Auto-seed: popula tribunais e usuário admin no primeiro startup
+// Auto-seed: popula tribunais e usuÃ¡rio admin no primeiro startup
 const autoSeed = async () => {
   for (const data of listarTribunaisDataJud()) {
     const [tribunal, created] = await Tribunal.findOrCreate({ where: { codigo: data.codigo }, defaults: data });
@@ -280,7 +285,7 @@ const autoSeed = async () => {
   const adminOab = process.env.ADMIN_OAB;
   const adminPassword = process.env.ADMIN_PASSWORD;
   if (!adminOab || !adminPassword) {
-    logger.info('Seed: admin ignorado (defina ADMIN_OAB e ADMIN_PASSWORD para criar usuário inicial)');
+    logger.info('Seed: admin ignorado (defina ADMIN_OAB e ADMIN_PASSWORD para criar usuÃ¡rio inicial)');
     return;
   }
 
@@ -295,20 +300,30 @@ const autoSeed = async () => {
       passwordHash: senhaHash,
     },
   });
-  logger.info(`Seed: usuário admin verificado (${adminOab})`);
+  logger.info(`Seed: usuÃ¡rio admin verificado (${adminOab})`);
 };
 
 // Start server
 const startServer = async () => {
   try {
     validateAuthConfig();
+    validateDataJudProductionConfig();
     await connectDatabase();
     await autoSeed();
 
+    const mustCheckDataJudOnStartup = process.env.DATAJUD_STARTUP_SMOKE_CHECK !== 'false';
+    if (mustCheckDataJudOnStartup && process.env.NODE_ENV === 'production') {
+      const smoke = await DataJudHealthService.smokeCheck(true);
+      if (!smoke.ok) {
+        throw new Error(`FATAL: DataJud smoke check falhou (${smoke.message || smoke.status || 'unknown'})`);
+      }
+    }
+
     notificationService.initialize(httpServer);
 
-    // Inicia MonitoringService se habilitado (padrão: true em produção)
-    const monitoringEnabled = process.env.ENABLE_MONITORING !== 'false';
+    // Inicia MonitoringService se habilitado (padrÃ£o: true em produÃ§Ã£o)
+    const monitoringEnabled = process.env.ENABLE_MONITORING === 'true'
+      || (process.env.NODE_ENV !== 'production' && process.env.ENABLE_MONITORING !== 'false');
     if (monitoringEnabled) {
       const intervalMs = parseInt(process.env.MONITORING_INTERVAL_MS || String(DEFAULT_MONITORING_POLL_INTERVAL_MS), 10);
       MonitoringService.start(intervalMs);
@@ -318,7 +333,9 @@ const startServer = async () => {
     }
 
     // Inicia monitoramento de OABs cadastradas
-    if (process.env.ENABLE_OAB_MONITORING !== 'false') {
+    const oabMonitoringEnabled = process.env.ENABLE_OAB_MONITORING === 'true'
+      || (process.env.NODE_ENV !== 'production' && process.env.ENABLE_OAB_MONITORING !== 'false');
+    if (oabMonitoringEnabled) {
       ProcessoMonitoramentoService.iniciar();
       logger.info('ProcessoMonitoramentoService iniciado');
     }
@@ -327,7 +344,7 @@ const startServer = async () => {
     const ngrokEnabled = process.env.NGROK_ENABLED === 'true';
     if (ngrokEnabled) {
       const portNgrok = parseInt(process.env.NGROK_PORT || String(PORT), 10);
-      // Pequeno delay para garantir que o servidor já está ouvindo
+      // Pequeno delay para garantir que o servidor jÃ¡ estÃ¡ ouvindo
       setTimeout(async () => {
         const url = await ngrokService.start(portNgrok);
         if (url) {
@@ -336,7 +353,7 @@ const startServer = async () => {
       }, 2000);
     }
 
-    // Cleanup periódico do cache OAB (a cada 5 minutos)
+    // Cleanup periÃ³dico do cache OAB (a cada 5 minutos)
     setInterval(() => {
       const removidos = oabCacheService.cleanup();
       if (removidos > 0) {
@@ -345,7 +362,7 @@ const startServer = async () => {
     }, 5 * 60 * 1000);
 
     httpServer.listen(PORT, () => {
-      logger.info(`🚀 Server running on port ${PORT}`);
+      logger.info(`ðŸš€ Server running on port ${PORT}`);
       logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
       logger.info(`WebSocket notifications enabled`);
       if (ngrokEnabled) {
@@ -359,3 +376,4 @@ const startServer = async () => {
 };
 
 export { app, httpServer, startServer };
+

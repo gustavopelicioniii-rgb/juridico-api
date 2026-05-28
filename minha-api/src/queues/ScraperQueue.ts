@@ -283,15 +283,26 @@ scrapeQueue.on('completed', (job, result) => {
  * Adiciona job de scraping na fila
  */
 export async function agendarScraping(data: ScrapeJobData): Promise<Job<ScrapeJobData>> {
-  const job = await scrapeQueue.add(data, {
-    priority: data.prioridade || 2,
-    jobId: [
+  const deterministicScope = data.monitoramentoId || data.processoId || data.advogadoId;
+  const deterministicJobId = deterministicScope
+    ? [
+      'scrape',
+      data.tipo || 'PROCESSO',
       data.tribunalCodigo,
       data.numeroProcesso,
+      deterministicScope,
+    ].join('-')
+    : [
+      'scrape',
       data.tipo || 'PROCESSO',
-      data.monitoramentoId || data.processoId || 'manual',
+      data.tribunalCodigo,
+      data.numeroProcesso,
       Date.now(),
-    ].join('-'),
+    ].join('-');
+
+  const job = await scrapeQueue.add(data, {
+    priority: data.prioridade || 2,
+    jobId: deterministicJobId,
   });
   
   logger.info(`Scraping agendado: ${data.numeroProcesso} em ${data.tribunalCodigo}`, { jobId: job.id });
@@ -582,11 +593,11 @@ export async function agendarScrapingBatch(
       opts: {
         priority: item.prioridade || 2,
         jobId: [
+          'scrape',
+          item.tipo || 'PROCESSO',
           item.tribunalCodigo,
           item.numeroProcesso,
-          item.tipo || 'PROCESSO',
-          item.monitoramentoId || item.processoId || 'batch',
-          Date.now(),
+          item.monitoramentoId || item.processoId || item.advogadoId || `batch-${Date.now()}`,
         ].join('-'),
       },
     }))

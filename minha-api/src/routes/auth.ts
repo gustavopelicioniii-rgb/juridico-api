@@ -8,6 +8,18 @@ import { generateToken, generateRefreshToken, verifyToken, blacklistToken, AuthP
 import Advogado from '../models/Advogado';
 
 const router = Router();
+const normalize = (value?: string | null): string | undefined => value?.trim().toUpperCase();
+const isAdminAccount = (oab?: string, email?: string): boolean => {
+  const adminOab = normalize(process.env.ADMIN_OAB);
+  const currentOab = normalize(oab);
+  if (adminOab && currentOab && adminOab === currentOab) {
+    return true;
+  }
+
+  const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+  const currentEmail = email?.trim().toLowerCase();
+  return !!adminEmail && !!currentEmail && adminEmail === currentEmail;
+};
 
 /**
  * POST /api/v1/auth/login
@@ -62,7 +74,7 @@ router.post('/login', async (req: Request, res: Response) => {
     const payload: Omit<AuthPayload, 'iat' | 'exp'> = {
       userId: advogado.id,
       advogadoId: advogado.id,
-      role: 'USER',
+      role: isAdminAccount(advogado.oab, advogado.email) ? 'ADMIN' : 'USER',
     };
 
     const accessToken = generateToken(payload);
@@ -174,7 +186,10 @@ router.post('/refresh', async (req: Request, res: Response) => {
     }
 
     try {
-      const decoded = verifyToken(refreshToken, true);
+      const decoded = await verifyToken(refreshToken, true);
+      if (decoded.jti) {
+        await blacklistToken(decoded.jti, decoded.exp, true);
+      }
 
       const payload: Omit<AuthPayload, 'iat' | 'exp'> = {
         userId: decoded.userId,
@@ -206,18 +221,30 @@ router.post('/refresh', async (req: Request, res: Response) => {
  * POST /api/v1/auth/logout
  * Invalida o token (logout client-side + server-side)
  */
-router.post('/logout', (req: Request, res: Response) => {
+router.post('/logout', async (req: Request, res: Response) => {
   const authHeader = req.headers.authorization;
+  const refreshToken = req.body?.refreshToken as string | undefined;
 
   if (authHeader && authHeader.startsWith('Bearer ')) {
     try {
       const token = authHeader.split(' ')[1];
-      const decoded = verifyToken(token, false);
+      const decoded = await verifyToken(token, false);
       if (decoded.jti) {
-        blacklistToken(decoded.jti, false);
+        await blacklistToken(decoded.jti, decoded.exp, false);
       }
     } catch {
       // Token inválido já expira ou é inválido
+    }
+  }
+
+  if (refreshToken) {
+    try {
+      const decodedRefresh = await verifyToken(refreshToken, true);
+      if (decodedRefresh.jti) {
+        await blacklistToken(decodedRefresh.jti, decodedRefresh.exp, true);
+      }
+    } catch {
+      // refresh inválido/expirado
     }
   }
 
@@ -239,7 +266,7 @@ router.get('/me', async (req: Request, res: Response) => {
     }
 
     const token = authHeader.split(' ')[1];
-    const decoded = verifyToken(token, false);
+    const decoded = await verifyToken(token, false);
 
     const advogado = await Advogado.findByPk(decoded.advogadoId);
 

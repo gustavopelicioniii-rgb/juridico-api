@@ -39,6 +39,22 @@ class MemoryCache {
     await this.set(key, value, seconds);
   }
 
+  async setnx(key: string, value: string, ttlSeconds?: number): Promise<number> {
+    const existing = await this.get(key);
+    if (existing !== null) {
+      return 0;
+    }
+    await this.set(key, value, ttlSeconds);
+    return 1;
+  }
+
+  async incr(key: string, ttlSeconds?: number): Promise<number> {
+    const current = await this.get(key);
+    const next = current ? Number(current) + 1 : 1;
+    await this.set(key, String(next), ttlSeconds);
+    return next;
+  }
+
   async exists(key: string): Promise<number> {
     return this.cache.has(key) ? 1 : 0;
   }
@@ -93,7 +109,7 @@ redisClient.on('connect', () => {
   console.log('✅ Redis connection established successfully.');
 });
 
-redisClient.on('error', (error) => {
+redisClient.on('error', (_error) => {
   if (!redisAvailable) {
     console.warn('⚠️ Redis unavailable, using in-memory fallback cache.');
   }
@@ -176,6 +192,37 @@ export const cache = {
     return this.set(key, value, seconds);
   },
 
+  async setnx(key: string, value: string, ttlSeconds?: number): Promise<number> {
+    if (redisAvailable) {
+      try {
+        if (ttlSeconds) {
+          const result = await redisClient.set(key, value, 'EX', ttlSeconds, 'NX');
+          return result === 'OK' ? 1 : 0;
+        }
+        const result = await redisClient.setnx(key, value);
+        return result;
+      } catch {
+        return memoryCache.setnx(key, value, ttlSeconds);
+      }
+    }
+    return memoryCache.setnx(key, value, ttlSeconds);
+  },
+
+  async incr(key: string, ttlSeconds?: number): Promise<number> {
+    if (redisAvailable) {
+      try {
+        const value = await redisClient.incr(key);
+        if (value === 1 && ttlSeconds) {
+          await redisClient.expire(key, ttlSeconds);
+        }
+        return value;
+      } catch {
+        return memoryCache.incr(key, ttlSeconds);
+      }
+    }
+    return memoryCache.incr(key, ttlSeconds);
+  },
+
   async exists(key: string): Promise<number> {
     if (redisAvailable) {
       try {
@@ -211,6 +258,8 @@ export const redis = {
   keys: (pattern: string) => cache.keys(pattern),
   mget: (...keys: string[]) => cache.mget(...keys),
   setex: (key: string, seconds: number, value: string) => cache.setex(key, seconds, value),
+  setnx: (key: string, value: string, ttlSeconds?: number) => cache.setnx(key, value, ttlSeconds),
+  incr: (key: string, ttlSeconds?: number) => cache.incr(key, ttlSeconds),
   exists: (key: string) => cache.exists(key),
   ttl: (key: string) => cache.ttl(key),
   isAvailable: () => redisAvailable,

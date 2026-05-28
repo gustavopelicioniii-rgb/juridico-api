@@ -1,5 +1,5 @@
-/**
- * Worker standalone — executa scraping e monitoramento em processo separado
+﻿/**
+ * Worker standalone â€” executa scraping e monitoramento em processo separado
  * Uso: npx ts-node src/worker.ts
  */
 
@@ -23,12 +23,12 @@ async function main() {
     // Conecta ao banco
     await connectDatabase();
 
-    // Inicializa WebSocket (necessário para NotificationService)
+    // Inicializa WebSocket (necessÃ¡rio para NotificationService)
     const httpServer = createServer();
     const io = new Server(httpServer, {
       cors: { origin: '*', methods: ['GET', 'POST'] },
     });
-    (notificationService as any).io = io;
+    (notificationService as unknown as { io: Server }).io = io;
     httpServer.listen(PORT, () => {
       logger.info(`Worker WebSocket listener on port ${PORT}`);
     });
@@ -36,11 +36,18 @@ async function main() {
     // Inicia fila Bull apenas no processo worker.
     startScrapeQueueProcessor();
 
-    // Inicia serviço de monitoramento
-    MonitoringService.start(DEFAULT_MONITORING_POLL_INTERVAL_MS);
-    ProcessoMonitoramentoService.iniciar();
+    // Inicia serviÃ§o de monitoramento
+    const monitoringEnabled = process.env.ENABLE_MONITORING !== 'false';
+    const oabMonitoringEnabled = process.env.ENABLE_OAB_MONITORING !== 'false';
 
-    logger.info('Worker started successfully');
+    if (monitoringEnabled) {
+      MonitoringService.start(DEFAULT_MONITORING_POLL_INTERVAL_MS);
+    }
+    if (oabMonitoringEnabled) {
+      ProcessoMonitoramentoService.iniciar();
+    }
+
+    logger.info(`Worker started successfully (monitoring=${monitoringEnabled}, oabMonitoring=${oabMonitoringEnabled})`);
 
     // Graceful shutdown
     const shutdown = async (signal: string) => {
@@ -60,3 +67,4 @@ async function main() {
 }
 
 main();
+

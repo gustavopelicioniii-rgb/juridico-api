@@ -10,6 +10,7 @@ import Processo from '../models/Processo';
 import Movimentacao from '../models/Movimentacao';
 import Tribunal from '../models/Tribunal';
 import logger from '../config/logger';
+import { cache } from '../config/redis';
 import {
   DEFAULT_MONITORING_POLL_INTERVAL_MS,
   DEFAULT_PROCESS_MONITORING_INTERVAL_MINUTES,
@@ -27,6 +28,9 @@ class MonitoringService {
   private isRunning: boolean = false;
   private pollInterval: NodeJS.Timeout | null = null;
   private intervalMs: number = DEFAULT_MONITORING_POLL_INTERVAL_MS;
+  private readonly instanceId: string = process.env.MONITORING_INSTANCE_ID || `${process.pid}`;
+  private readonly lockKey = 'monitoring:poll:lock';
+  private readonly lockEnabled = process.env.MONITORING_DISTRIBUTED_LOCK !== 'false';
   
   /**
    * Inicia o serviço de monitoramento
@@ -73,8 +77,18 @@ class MonitoringService {
     if (!this.isRunning) return;
     
     logger.debug('Iniciando rodada de polling...');
+    let lockAcquired = false;
     
     try {
+      if (this.lockEnabled) {
+        const lockTtl = Math.max(30, Math.ceil(this.intervalMs / 1000));
+        lockAcquired = (await cache.setnx(this.lockKey, this.instanceId, lockTtl)) === 1;
+        if (!lockAcquired) {
+          logger.debug('Polling ignorado: lock distribuído já está em posse de outra instância');
+          return;
+        }
+      }
+
       // Busca monitoramentos ativos
       const monitoramentos = await Monitoramento.findAll({
         where: { ativo: true },
