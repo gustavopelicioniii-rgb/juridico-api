@@ -124,6 +124,18 @@ export function verifyToken(token: string, isRefresh = false): AuthPayload {
   return decoded;
 }
 
+export function canAccessAdvogadoResource(user: AuthPayload | undefined, advogadoId: string): boolean {
+  if (!user) {
+    return false;
+  }
+
+  if (user.role === 'ADMIN' || user.role === 'SYSTEM') {
+    return true;
+  }
+
+  return Boolean(user.advogadoId && user.advogadoId === advogadoId);
+}
+
 /**
  * Middleware de autenticação obrigatório
  */
