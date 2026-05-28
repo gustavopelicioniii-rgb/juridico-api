@@ -14,7 +14,7 @@ import TribunalService from '../services/TribunalService';
 import FirecrawlEnrichmentService from '../services/FirecrawlEnrichmentService';
 import { agendarFirecrawlEnrichment, agendarOABCrawl } from '../queues/ScraperQueue';
 import { authRouter } from './auth';
-import { authMiddleware } from '../middleware/auth';
+import { authMiddleware, canAccessAdvogadoResource } from '../middleware/auth';
 import { cache, CACHE_TTL, CACHE_KEYS } from '../config/redis';
 import logger from '../config/logger';
 import {
@@ -849,6 +849,16 @@ router.post('/tribunais/:codigo/buscar-oab/async', async (req: Request, res: Res
       });
     }
 
+    const advogadoIdSolicitado = String(advogadoId);
+    if (!canAccessAdvogadoResource(req.user, advogadoIdSolicitado)) {
+      return res.status(403).json({
+        erro: {
+          codigo: 'FORBIDDEN',
+          mensagem: 'Você não tem permissão para agendar busca para este advogado.',
+        },
+      });
+    }
+
     const oabNormalizada = String(oab).toUpperCase().replace(/\s/g, '');
     const { registry } = await import('../tribunais');
     const tribunaisRegistrados = registry
@@ -868,14 +878,14 @@ router.post('/tribunais/:codigo/buscar-oab/async', async (req: Request, res: Res
       });
     }
 
-    const advogado = await Advogado.findByPk(advogadoId);
+    const advogado = await Advogado.findByPk(advogadoIdSolicitado);
     if (!advogado) {
       return res.status(404).json({
         erro: { codigo: 'ADVOGADO_NAO_ENCONTRADO', mensagem: 'Advogado não encontrado.' },
       });
     }
 
-    const correlationId = `${advogadoId}:${buscaNacional ? 'TODOS' : tribunalCodigo}:${Date.now()}`;
+    const correlationId = `${advogadoIdSolicitado}:${buscaNacional ? 'TODOS' : tribunalCodigo}:${Date.now()}`;
 
     auditJob = await Job.create({
       tipo: 'SCRAPE',
@@ -885,7 +895,7 @@ router.post('/tribunais/:codigo/buscar-oab/async', async (req: Request, res: Res
       maxTentativas: 3,
       payload: {
         mode: 'oab_crawl',
-        advogadoId,
+        advogadoId: advogadoIdSolicitado,
         oab: oabNormalizada,
         nome,
         tribunalCodigo: buscaNacional ? 'TODOS' : tribunalCodigo,
@@ -896,7 +906,7 @@ router.post('/tribunais/:codigo/buscar-oab/async', async (req: Request, res: Res
     });
 
     const queueJob = await agendarOABCrawl({
-      advogadoId,
+      advogadoId: advogadoIdSolicitado,
       oab: oabNormalizada,
       nome,
       tribunais: tribunaisAlvo,
