@@ -23,6 +23,7 @@ import {
   type OABProcessoResumo,
   type ProcessoApiResponse,
 } from '../utils/serializeProcessoApi';
+import { canAssociateAdvogadoId } from '../utils/processOwnership';
 
 const CACHE_TTL_MINUTES = 30;
 const MAX_PARALLEL_FETCHES = 5; // Paralelo para produção
@@ -83,6 +84,25 @@ export interface ResultadoBuscaProcesso {
 }
 
 class TribunalService {
+  private advogadoIdAssociavel(
+    processo: Pick<Processo, 'advogadoId' | 'numeroProcesso'>,
+    advogadoId?: string
+  ): string | undefined {
+    if (canAssociateAdvogadoId(processo.advogadoId, advogadoId)) {
+      return advogadoId;
+    }
+
+    if (advogadoId) {
+      logger.warn('Ignorando tentativa de reassociar processo a outro advogado', {
+        numeroProcesso: processo.numeroProcesso,
+        advogadoAtual: processo.advogadoId,
+        advogadoSolicitado: advogadoId,
+      });
+    }
+
+    return undefined;
+  }
+
   /**
    * Busca um processo pelo número e salva/atualiza no banco
    * Usa transação para garantir atomicidade em partes + movimentações
@@ -116,6 +136,7 @@ class TribunalService {
 
       const ehNovo = !processoExistente;
       let processo: Processo;
+      let advogadoIdParaMonitoramento: string | undefined;
 
       if (ehNovo) {
         const createData: any = {
@@ -141,12 +162,14 @@ class TribunalService {
         };
         if (advogadoId) {
           createData.advogadoId = advogadoId;
+          advogadoIdParaMonitoramento = advogadoId;
         }
         processo = await Processo.create(createData, { transaction: t });
 
         logger.info(`Novo processo criado: ${processo.numeroProcesso}`);
       } else {
         processo = processoExistente;
+        const advogadoIdParaAssociar = this.advogadoIdAssociavel(processo, advogadoId);
         const updateData: any = {
           classe: dadosProcesso.classe || processo.classe,
           assunto: dadosProcesso.assunto || processo.assunto,
@@ -159,8 +182,9 @@ class TribunalService {
           dadosOriginais: dadosProcesso.dadosOriginais,
           enriquecido: true, // Marcado como enriquecido quando dados sao atualizados
         };
-        if (advogadoId) {
-          updateData.advogadoId = advogadoId;
+        if (advogadoIdParaAssociar) {
+          updateData.advogadoId = advogadoIdParaAssociar;
+          advogadoIdParaMonitoramento = advogadoIdParaAssociar;
         }
         await processo.update(
           updateData,
@@ -180,8 +204,8 @@ class TribunalService {
         t
       );
 
-      if (advogadoId) {
-        await this.garantirMonitoramentoDiario(processo.id, advogadoId, t);
+      if (advogadoIdParaMonitoramento) {
+        await this.garantirMonitoramentoDiario(processo.id, advogadoIdParaMonitoramento, t);
       }
 
       return {
@@ -249,7 +273,6 @@ class TribunalService {
 
     const dadosResumo = {
       tribunalId: tribunal.id,
-      advogadoId,
       status: 'MONITORANDO' as const,
       classe: proc.classe,
       classeCodigo: proc.classeCodigo,
@@ -275,23 +298,27 @@ class TribunalService {
     });
 
     if (existente) {
-      const updateData: Partial<typeof dadosResumo> = {
+      const advogadoIdParaAssociar = this.advogadoIdAssociavel(existente, advogadoId);
+      const updateData: Partial<typeof dadosResumo> & { advogadoId?: string } = {
         tribunalId: dadosResumo.tribunalId,
       };
-      if (advogadoId) updateData.advogadoId = advogadoId;
+      if (advogadoIdParaAssociar) updateData.advogadoId = advogadoIdParaAssociar;
 
       if (existente.enriquecido !== true) {
         Object.assign(updateData, dadosResumo);
       }
 
       await existente.update(updateData);
-      await this.garantirMonitoramentoDiarioSemTransacao(existente.id, advogadoId);
+      if (advogadoIdParaAssociar) {
+        await this.garantirMonitoramentoDiarioSemTransacao(existente.id, advogadoIdParaAssociar);
+      }
       return existente.numeroProcesso;
     }
 
     const processo = await Processo.create({
       numeroProcesso: proc.numeroProcesso,
       ...dadosResumo,
+      advogadoId,
     });
     await this.garantirMonitoramentoDiarioSemTransacao(processo.id, advogadoId);
     return processo.numeroProcesso;
