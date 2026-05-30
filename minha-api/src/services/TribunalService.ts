@@ -23,6 +23,10 @@ import {
   type OABProcessoResumo,
   type ProcessoApiResponse,
 } from '../utils/serializeProcessoApi';
+import {
+  assertProcessCanBeAssignedToAdvogado,
+  shouldAssignProcessAdvogadoId,
+} from '../utils/processOwnership';
 
 const CACHE_TTL_MINUTES = 30;
 const MAX_PARALLEL_FETCHES = 5; // Paralelo para produção
@@ -147,6 +151,11 @@ class TribunalService {
         logger.info(`Novo processo criado: ${processo.numeroProcesso}`);
       } else {
         processo = processoExistente;
+        assertProcessCanBeAssignedToAdvogado(
+          processo.advogadoId,
+          advogadoId,
+          processo.numeroProcesso
+        );
         const updateData: any = {
           classe: dadosProcesso.classe || processo.classe,
           assunto: dadosProcesso.assunto || processo.assunto,
@@ -159,7 +168,7 @@ class TribunalService {
           dadosOriginais: dadosProcesso.dadosOriginais,
           enriquecido: true, // Marcado como enriquecido quando dados sao atualizados
         };
-        if (advogadoId) {
+        if (shouldAssignProcessAdvogadoId(processo.advogadoId, advogadoId)) {
           updateData.advogadoId = advogadoId;
         }
         await processo.update(
@@ -275,13 +284,21 @@ class TribunalService {
     });
 
     if (existente) {
+      assertProcessCanBeAssignedToAdvogado(
+        existente.advogadoId,
+        advogadoId,
+        existente.numeroProcesso
+      );
       const updateData: Partial<typeof dadosResumo> = {
         tribunalId: dadosResumo.tribunalId,
       };
-      if (advogadoId) updateData.advogadoId = advogadoId;
+      if (shouldAssignProcessAdvogadoId(existente.advogadoId, advogadoId)) {
+        updateData.advogadoId = advogadoId;
+      }
 
       if (existente.enriquecido !== true) {
-        Object.assign(updateData, dadosResumo);
+        const { advogadoId: _ignoredAdvogadoId, ...dadosResumoSemAdvogado } = dadosResumo;
+        Object.assign(updateData, dadosResumoSemAdvogado);
       }
 
       await existente.update(updateData);
