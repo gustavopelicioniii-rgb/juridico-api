@@ -117,23 +117,23 @@ describe('TribunalService ownership guard', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    (registry.get as jest.Mock).mockReturnValue(adapter);
-    (adapter.buscarProcesso as jest.Mock).mockResolvedValue(dadosProcesso);
-    (Tribunal.findOne as jest.Mock).mockResolvedValue({ id: 'tribunal-1' });
-    (sequelize.transaction as jest.Mock).mockImplementation(async (callback: (t: unknown) => Promise<unknown>) =>
+    (registry.get as any).mockReturnValue(adapter);
+    (adapter.buscarProcesso as any).mockResolvedValue(dadosProcesso);
+    (Tribunal.findOne as any).mockResolvedValue({ id: 'tribunal-1' });
+    (sequelize.transaction as any).mockImplementation(async (callback: (t: unknown) => Promise<unknown>) =>
       callback({ id: 'tx' })
     );
-    (Parte.destroy as jest.Mock).mockResolvedValue(0);
-    (Parte.bulkCreate as jest.Mock).mockResolvedValue([]);
-    (Movimentacao.findOne as jest.Mock).mockResolvedValue(null);
-    (Movimentacao.bulkCreate as jest.Mock).mockResolvedValue([]);
-    (Monitoramento.findOne as jest.Mock).mockResolvedValue(null);
-    (Monitoramento.create as jest.Mock).mockResolvedValue({});
+    (Parte.destroy as any).mockResolvedValue(0);
+    (Parte.bulkCreate as any).mockResolvedValue([]);
+    (Movimentacao.findOne as any).mockResolvedValue(null);
+    (Movimentacao.bulkCreate as any).mockResolvedValue([]);
+    (Monitoramento.findOne as any).mockResolvedValue(null);
+    (Monitoramento.create as any).mockResolvedValue({});
   });
 
   it('bloqueia busca que tentaria reatribuir processo de outro advogado', async () => {
     const update = jest.fn();
-    (Processo.findOne as jest.Mock).mockResolvedValue({
+    (Processo.findOne as any).mockResolvedValue({
       id: 'proc-1',
       numeroProcesso: dadosProcesso.numeroProcesso,
       advogadoId: 'adv-owner',
@@ -159,7 +159,7 @@ describe('TribunalService ownership guard', () => {
 
   it('permite que processo sem dono seja assumido pelo advogado solicitante', async () => {
     const update = jest.fn(async () => undefined);
-    (Processo.findOne as jest.Mock).mockResolvedValue({
+    (Processo.findOne as any).mockResolvedValue({
       id: 'proc-1',
       numeroProcesso: dadosProcesso.numeroProcesso,
       advogadoId: undefined,
