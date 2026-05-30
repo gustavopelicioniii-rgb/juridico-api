@@ -29,6 +29,7 @@ import {
   isElevatedRole as isElevatedRoleByRole,
   resolveScopedAdvogadoIdForActor,
 } from '../utils/tenantScope';
+import { ProcessOwnershipError } from '../utils/processOwnership';
 
 const router = Router();
 
@@ -896,6 +897,11 @@ router.post('/tribunais/:codigo/buscar', async (req: Request, res: Response) => 
       novasMovimentacoes: resultado.novasMovimentacoes,
     });
   } catch (error: any) {
+    if (error instanceof ProcessOwnershipError) {
+      return res.status(error.status).json({
+        erro: { codigo: error.code, mensagem: error.message },
+      });
+    }
     if (error.message.includes('nÃ£o suportado') || error.message.includes('nÃ£o encontrado')) {
       return res.status(400).json({ erro: { codigo: 'TRIBUNAL_ERROR', mensagem: error.message } });
     }
