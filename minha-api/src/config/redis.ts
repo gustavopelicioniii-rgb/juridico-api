@@ -1,4 +1,4 @@
-import Redis from 'ioredis';
+import Redis, { RedisOptions } from 'ioredis';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -70,17 +70,22 @@ class MemoryCache {
   }
 }
 
+const DEFAULT_REDIS_HOST = process.env.REDIS_HOST || '127.0.0.1';
+const DEFAULT_REDIS_PORT = parseInt(process.env.REDIS_PORT || '6379', 10);
+
+const redisRetryStrategy = (times: number) => {
+  // Stop retrying after 3 attempts - use fallback
+  if (times >= 3) return null;
+  const delay = Math.min(times * 50, 2000);
+  return delay;
+};
+
 // Try to create Redis connection, fallback to memory cache
-const redisConfig = {
-  host: process.env.REDIS_HOST || 'localhost',
-  port: parseInt(process.env.REDIS_PORT || '6379', 10),
+export const redisConfig: RedisOptions = {
+  host: DEFAULT_REDIS_HOST,
+  port: DEFAULT_REDIS_PORT,
   password: process.env.REDIS_PASSWORD || undefined,
-  retryStrategy: (times: number) => {
-    // Stop retrying after 3 attempts - use fallback
-    if (times >= 3) return null;
-    const delay = Math.min(times * 50, 2000);
-    return delay;
-  },
+  retryStrategy: redisRetryStrategy,
   maxRetriesPerRequest: 3,
   lazyConnect: true,
   enableOfflineQueue: false,
@@ -88,10 +93,22 @@ const redisConfig = {
 
 const redisUrl = process.env.REDIS_URL;
 
+export function getRedisUrl(): string {
+  if (redisUrl) {
+    return redisUrl;
+  }
+
+  const auth = redisConfig.password
+    ? `:${encodeURIComponent(redisConfig.password)}@`
+    : '';
+
+  return `redis://${auth}${DEFAULT_REDIS_HOST}:${DEFAULT_REDIS_PORT}`;
+}
+
 // Create Redis instance (prioritize REDIS_URL when provided)
 const redisClient = redisUrl
   ? new Redis(redisUrl, {
-    retryStrategy: redisConfig.retryStrategy,
+    retryStrategy: redisRetryStrategy,
     maxRetriesPerRequest: redisConfig.maxRetriesPerRequest,
     lazyConnect: redisConfig.lazyConnect,
     enableOfflineQueue: redisConfig.enableOfflineQueue,

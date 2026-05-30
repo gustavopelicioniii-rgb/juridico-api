@@ -35,11 +35,11 @@ interface ProcessoAttributes {
   updatedAt?: Date;
 }
 
-interface ProcessoCreationAttributes extends Optional<ProcessoAttributes,
+type ProcessoCreationAttributes = Optional<ProcessoAttributes,
   'id' | 'tribunalId' | 'advogadoId' | 'classe' | 'classeCodigo' | 'assunto' | 'assuntoPrincipal'
   | 'instancia' | 'status' | 'dataAjuizamento' | 'valorCausa' | 'orgaoJulgador' | 'orgaoJulgadorCodigo'
   | 'nivelSigilo' | 'sistema' | 'formato' | 'dadosOriginais' | 'enriquecido'
-  | 'createdAt' | 'updatedAt'> {}
+  | 'createdAt' | 'updatedAt'>;
 
 class Processo extends Model<ProcessoAttributes, ProcessoCreationAttributes> implements ProcessoAttributes {
   public id!: string;

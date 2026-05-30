@@ -5,7 +5,7 @@
  * e notifica clientes via WebSocket quando novos processos surgem.
  */
 
-import { Op } from 'sequelize';
+import { Op, Order } from 'sequelize';
 import { registry } from '../tribunais';
 import TribunalService from './TribunalService';
 
@@ -16,10 +16,17 @@ import { normalizarNumeroProcesso } from '../utils/serializeProcessoApi';
 
 const INTERVALO_PADRAO_MS = 5 * 60 * 1000;
 
+type ProcessoEncontrado = {
+  numeroProcesso: string;
+};
+
+const getErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
 /**
  * Busca processos enriquecidos para uma OAB usando TribunalService
  */
-async function buscarPorOABEnriquecido(oab: string, _completo: boolean): Promise<{ processos: any[] }> {
+async function buscarPorOABEnriquecido(oab: string, _completo: boolean): Promise<{ processos: ProcessoEncontrado[] }> {
   try {
     const resultado = await TribunalService.buscarPorOABComCache(
       oab,
@@ -29,8 +36,8 @@ async function buscarPorOABEnriquecido(oab: string, _completo: boolean): Promise
       false // usa cache se disponível
     );
     return { processos: resultado.processos };
-  } catch (error: any) {
-    logger.error(`[Monitoramento] Erro ao buscar processos enriquecidos: ${error.message}`);
+  } catch (error) {
+    logger.error(`[Monitoramento] Erro ao buscar processos enriquecidos: ${getErrorMessage(error)}`);
     return { processos: [] };
   }
 }
@@ -38,7 +45,7 @@ async function buscarPorOABEnriquecido(oab: string, _completo: boolean): Promise
 /**
  * Salva múltiplos processos usando TribunalService
  */
-async function salvarLoteProcessos(processos: any[]): Promise<{ salvos: number; erros: number }> {
+async function salvarLoteProcessos(processos: ProcessoEncontrado[]): Promise<{ salvos: number; erros: number }> {
   let salvos = 0;
   let erros = 0;
 
@@ -46,8 +53,8 @@ async function salvarLoteProcessos(processos: any[]): Promise<{ salvos: number; 
     try {
       await TribunalService.buscarESalvarProcesso(proc.numeroProcesso, 'TJSP');
       salvos++;
-    } catch (error: any) {
-      logger.warn(`[Monitoramento] Erro ao salvar processo ${proc.numeroProcesso}: ${error.message}`);
+    } catch (error) {
+      logger.warn(`[Monitoramento] Erro ao salvar processo ${proc.numeroProcesso}: ${getErrorMessage(error)}`);
       erros++;
     }
   }
@@ -137,8 +144,8 @@ class ProcessoMonitoramentoService {
           }
 
           await new Promise(r => setTimeout(r, 1500));
-        } catch (error: any) {
-          logger.error(`[Monitoramento] Erro ao verificar OAB ${oab.oab}: ${error.message}`);
+        } catch (error) {
+          logger.error(`[Monitoramento] Erro ao verificar OAB ${oab.oab}: ${getErrorMessage(error)}`);
           this.status.erros++;
         }
       }
@@ -147,8 +154,8 @@ class ProcessoMonitoramentoService {
       const duracao = Date.now() - inicio;
 
       logger.info(`[Monitoramento] Verificação concluída em ${duracao}ms. OABs: ${oabs.length}`);
-    } catch (error: any) {
-      logger.error(`[Monitoramento] Erro geral na verificação: ${error.message}`);
+    } catch (error) {
+      logger.error(`[Monitoramento] Erro geral na verificação: ${getErrorMessage(error)}`);
       this.status.erros++;
     }
   }
@@ -171,11 +178,11 @@ class ProcessoMonitoramentoService {
           const busca = await adapter.buscarPorOAB(oab.toUpperCase().replace(/\s/g, ''));
           resultado.processosTotal = busca.processos.length;
           numerosAtuais.push(
-            ...busca.processos.map((r: any) => normalizarNumeroProcesso(r.numeroProcesso))
+            ...busca.processos.map(r => normalizarNumeroProcesso(r.numeroProcesso))
           );
         }
-      } catch (error: any) {
-        resultado.erros.push(`DataJud: ${error.message}`);
+      } catch (error) {
+        resultado.erros.push(`DataJud: ${getErrorMessage(error)}`);
       }
 
       if (numerosAtuais.length === 0) {
@@ -190,7 +197,7 @@ class ProcessoMonitoramentoService {
       });
 
       const numerosSalvos = new Set(
-        jaSalvos.map((p: any) => normalizarNumeroProcesso(p.numeroProcesso))
+        jaSalvos.map(p => normalizarNumeroProcesso(p.numeroProcesso))
       );
 
       resultado.processosNovos = numerosUnicos.filter(n => !numerosSalvos.has(n));
@@ -203,7 +210,7 @@ class ProcessoMonitoramentoService {
 
         const novos = new Set(resultado.processosNovos);
         const novosEnriquecidos = resultadoEnriquecido.processos.filter(
-          (p: any) => novos.has(normalizarNumeroProcesso(p.numeroProcesso))
+          p => novos.has(normalizarNumeroProcesso(p.numeroProcesso))
         );
 
         const { salvos, erros } = await salvarLoteProcessos(novosEnriquecidos);
@@ -223,9 +230,10 @@ class ProcessoMonitoramentoService {
         { ultimaVerificacao: new Date() },
         { where: { oab: oab.toUpperCase().replace(/\s/g, '') } }
       );
-    } catch (error: any) {
-      logger.error(`[Monitoramento] Erro ao verificar OAB ${oab}: ${error.message}`);
-      resultado.erros.push(error.message);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      logger.error(`[Monitoramento] Erro ao verificar OAB ${oab}: ${message}`);
+      resultado.erros.push(message);
       this.status.erros++;
     }
 
@@ -251,8 +259,8 @@ class ProcessoMonitoramentoService {
       logger.info(
         `[Monitoramento] Notificou ${resultado.processosNovos.length} novos processos para OAB ${oab}`
       );
-    } catch (error: any) {
-      logger.warn(`[Monitoramento] Erro ao notificar: ${error.message}`);
+    } catch (error) {
+      logger.warn(`[Monitoramento] Erro ao notificar: ${getErrorMessage(error)}`);
     }
   }
 
@@ -295,7 +303,7 @@ class ProcessoMonitoramentoService {
   async listarOABsMonitoradas(): Promise<OABMonitorada[]> {
     return OABMonitorada.findAll({
       where: { ativo: true },
-      order: [['ultimaVerificacao', 'DESC NULLS LAST']] as any,
+      order: [['ultimaVerificacao', 'DESC NULLS LAST']] as Order,
     });
   }
 

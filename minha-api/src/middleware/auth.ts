@@ -18,11 +18,9 @@ export interface AuthPayload {
   exp?: number;
 }
 
-declare global {
-  namespace Express {
-    interface Request {
-      user?: AuthPayload;
-    }
+declare module 'express-serve-static-core' {
+  interface Request {
+    user?: AuthPayload;
   }
 }
 
@@ -132,6 +130,14 @@ export async function verifyToken(token: string, isRefresh = false): Promise<Aut
   return decoded;
 }
 
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function getErrorName(error: unknown): string | undefined {
+  return error instanceof Error ? error.name : undefined;
+}
+
 /**
  * Middleware de autenticação obrigatório
  */
@@ -171,10 +177,10 @@ export function authMiddleware(
       const decoded = await verifyToken(token, false);
       req.user = decoded;
       next();
-    } catch (error: any) {
-      logger.warn('Tentativa de acesso com token inválido:', { error: error.message });
+    } catch (error) {
+      logger.warn('Tentativa de acesso com token inválido:', { error: getErrorMessage(error) });
 
-      if (error.name === 'TokenExpiredError') {
+      if (getErrorName(error) === 'TokenExpiredError') {
         res.status(401).json({
           erro: {
             codigo: 'TOKEN_EXPIRED',

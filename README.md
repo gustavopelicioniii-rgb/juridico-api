@@ -87,6 +87,18 @@ Por padrão, o sistema usa a **API pública DataJud (CNJ)** para ~91 tribunais. 
 | STJ | Superior Tribunal de Justiça |
 | STF | Supremo Tribunal Federal |
 
+### Smoke autenticado DataJud/OAB
+
+Para validar a integracao real com DataJud por uma rota autenticada, rode a API com `DATAJUD_API_KEY` configurada e `DATAJUD_MOCK=false`. O usuario de teste recomendado e a identidade OAB `361329` / `Sidney da Silva`; a senha deve vir de variavel de ambiente ou secret manager, nunca do repositorio.
+
+```bash
+cd minha-api
+ADMIN_OAB=361329 ADMIN_NOME="Sidney da Silva" ADMIN_PASSWORD="<senha-secreta>" npm run seed
+TEST_AUTH_PASSWORD="<senha-secreta>" npm run smoke:datajud:oab
+```
+
+Variaveis uteis: `API_BASE_URL`, `TEST_AUTH_OAB`, `TEST_AUTH_NOME`, `TEST_AUTH_TRIBUNAL`, `SMOKE_EXPECT_MIN_PROCESSES` e `SMOKE_REQUIRE_REAL_DATAJUD`.
+
 ## 🔌 Endpoints Principais
 
 > Requerem header `Authorization: Bearer <token>` exceto rotas de auth.
@@ -204,3 +216,46 @@ minha-api/
 ## 📄 Licença
 
 MIT License
+
+## Tribunais com login, certificado ou captcha
+
+Quando a API responder `status=requires-auth`, `captcha`, `blocked` ou `source_unavailable`, o comportamento esperado é:
+
+- `requires-auth`
+  - o portal oficial exige login, certificado digital ou convênio;
+  - ação necessária:
+    - usar credenciais do advogado/cliente com consentimento explícito;
+    - ou integrar uma fonte oficial/parceiro que entregue esse tribunal.
+
+- `captcha`
+  - o portal público exige resolução manual ou sessão autorizada;
+  - ação necessária:
+    - abrir o portal oficial;
+    - resolver o captcha manualmente ou por fluxo autorizado;
+    - repetir a coleta.
+
+- `blocked` / `source_unavailable`
+  - a fonte pública bloqueou automação ou está indisponível;
+  - ação necessária:
+    - consultar outro portal oficial;
+    - usar busca individual por número CNJ quando existir;
+    - ou operar via integração formal/parceiro.
+
+### O que precisa existir para puxar processos nesses casos
+
+Você precisa de uma destas estratégias:
+
+1. **credencial do advogado/cliente**
+   - login/senha, certificado A1/A3 ou sessão autenticada.
+
+2. **fonte oficial/parceiro**
+   - convênio, MNI, integração oficial, DataJud quando cobrir o caso.
+
+3. **fluxo operacional assistido**
+   - um operador humano resolve captcha/login e libera a coleta.
+
+### O que não fazer
+
+- não depender de bypass frágil de captcha como estratégia principal;
+- não usar credenciais de terceiros sem consentimento;
+- não prometer cobertura total para tribunais que hoje retornam `requires-auth` sem operação definida.

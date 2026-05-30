@@ -16,7 +16,7 @@ interface TribunalAttributes {
   updatedAt?: Date;
 }
 
-interface TribunalCreationAttributes extends Optional<TribunalAttributes, 'id' | 'scraperConfig' | 'ativo' | 'createdAt' | 'updatedAt'> {}
+type TribunalCreationAttributes = Optional<TribunalAttributes, 'id' | 'scraperConfig' | 'ativo' | 'createdAt' | 'updatedAt'>;
 
 class Tribunal extends Model<TribunalAttributes, TribunalCreationAttributes> implements TribunalAttributes {
   public id!: string;

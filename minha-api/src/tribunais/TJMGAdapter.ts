@@ -14,15 +14,25 @@ import type { Page, Browser } from 'puppeteer';
 import { BaseTribunalAdapter, DadosProcesso, DadosParte, DadosMovimentacao, ResultadoBusca } from './ITribunalAdapter';
 import logger from '../config/logger';
 
-interface TJMGParte {
-  nome: string;
-  tipo: string;
-  documento?: string;
+const getErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+interface StealthNavigator {
+  webdriver?: boolean;
+  plugins?: number[];
+  languages?: string[];
 }
 
-interface TJMGMovimentacao {
-  data: string;
-  descricao: string;
+interface StealthWindow {
+  chrome?: { runtime: Record<string, never> };
+}
+
+interface StealthDocumentTarget {
+  value?: string;
+}
+
+interface StealthDocument {
+  querySelector(selector: string): StealthDocumentTarget | null;
 }
 
 export class TJMGAdapter extends BaseTribunalAdapter {
@@ -68,7 +78,8 @@ export class TJMGAdapter extends BaseTribunalAdapter {
     
     // Stealth: remove webdriver property
     await this.page.evaluateOnNewDocument(() => {
-      const nav = (globalThis as any).navigator;
+      const browserGlobals = globalThis as typeof globalThis & Record<'navigator', StealthNavigator | undefined>;
+      const nav = browserGlobals['navigator'];
       if (nav) {
         Object.defineProperty(nav, 'webdriver', {
           get: () => false,
@@ -78,8 +89,11 @@ export class TJMGAdapter extends BaseTribunalAdapter {
     
     // Stealth: mock plugins
     await this.page.evaluateOnNewDocument(() => {
-      const nav = (globalThis as any).navigator;
-      const win = (globalThis as any).window;
+      const browserGlobals = globalThis as typeof globalThis
+        & Record<'navigator', StealthNavigator | undefined>
+        & Record<'window', StealthWindow | undefined>;
+      const nav = browserGlobals['navigator'];
+      const win = browserGlobals['window'];
       if (win) {
         win.chrome = { runtime: {} };
       }
@@ -92,7 +106,8 @@ export class TJMGAdapter extends BaseTribunalAdapter {
     
     // Stealth: mock languages
     await this.page.evaluateOnNewDocument(() => {
-      const nav = (globalThis as any).navigator;
+      const browserGlobals = globalThis as typeof globalThis & Record<'navigator', StealthNavigator | undefined>;
+      const nav = browserGlobals['navigator'];
       if (nav) {
         Object.defineProperty(nav, 'languages', {
           get: () => ['pt-BR', 'pt', 'en-US', 'en'],
@@ -194,12 +209,13 @@ export class TJMGAdapter extends BaseTribunalAdapter {
     while (tentativas < this.maxRetries) {
       try {
         return await this.executarBusca(numeroFormatado);
-      } catch (error: any) {
+      } catch (error: unknown) {
+        const message = getErrorMessage(error);
         tentativas++;
-        logger.warn(`Tentativa ${tentativas} falhou: ${error.message}`);
+        logger.warn(`Tentativa ${tentativas} falhou: ${message}`);
         
         if (tentativas >= this.maxRetries) {
-          throw new Error(`Falha ao buscar processo após ${this.maxRetries} tentativas: ${error.message}`);
+          throw new Error(`Falha ao buscar processo após ${this.maxRetries} tentativas: ${message}`);
         }
         
         // Espera antes de tentar novamente
@@ -237,7 +253,8 @@ export class TJMGAdapter extends BaseTribunalAdapter {
       
       // Insere a resposta do CAPTCHA
       await page.evaluate((response: string) => {
-        const doc = (globalThis as any).document;
+        const browserGlobals = globalThis as typeof globalThis & Record<'document', StealthDocument | undefined>;
+        const doc = browserGlobals['document'];
         const textarea = doc?.querySelector('[name="g-recaptcha-response"]');
         if (textarea) textarea.value = response;
         

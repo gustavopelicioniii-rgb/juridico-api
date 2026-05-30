@@ -12,7 +12,7 @@ interface AdvogadoAttributes {
   updatedAt?: Date;
 }
 
-interface AdvogadoCreationAttributes extends Optional<AdvogadoAttributes, 'id' | 'email' | 'passwordHash' | 'ativo' | 'createdAt' | 'updatedAt'> {}
+type AdvogadoCreationAttributes = Optional<AdvogadoAttributes, 'id' | 'email' | 'passwordHash' | 'ativo' | 'createdAt' | 'updatedAt'>;
 
 class Advogado extends Model<AdvogadoAttributes, AdvogadoCreationAttributes> implements AdvogadoAttributes {
   public id!: string;

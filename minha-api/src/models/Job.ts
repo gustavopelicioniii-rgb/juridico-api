@@ -20,7 +20,7 @@ interface JobAttributes {
   updatedAt?: Date;
 }
 
-interface JobCreationAttributes extends Optional<JobAttributes, 'id' | 'processoId' | 'payload' | 'erro' | 'startedAt' | 'completedAt' | 'createdAt' | 'updatedAt'> {}
+type JobCreationAttributes = Optional<JobAttributes, 'id' | 'processoId' | 'payload' | 'erro' | 'startedAt' | 'completedAt' | 'createdAt' | 'updatedAt'>;
 
 class Job extends Model<JobAttributes, JobCreationAttributes> implements JobAttributes {
   public id!: string;

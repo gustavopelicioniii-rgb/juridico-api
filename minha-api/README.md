@@ -113,6 +113,10 @@ USE_SQLITE=true
 # Redis
 REDIS_URL=redis://localhost:6379
 
+# DataJud real (CNJ)
+DATAJUD_API_KEY=sua_chave_datajud
+DATAJUD_MOCK=false
+
 # TJ-SP API (opcional)
 TJSP_API_KEY=sua_chave_api
 
@@ -132,6 +136,17 @@ docker compose up -d --build
 ```
 
 Detalhes em [DEPLOY-DOCKER.md](./DEPLOY-DOCKER.md). Para VPS online (Hostinger): [DEPLOY-VPS-HOSTINGER.md](./DEPLOY-VPS-HOSTINGER.md).
+
+### Smoke autenticado DataJud/OAB
+
+Com a API em execucao e `DATAJUD_API_KEY` configurada, valide a busca real por OAB usando a identidade de teste `361329` / `Sidney da Silva` sem versionar senha:
+
+```bash
+ADMIN_OAB=361329 ADMIN_NOME="Sidney da Silva" ADMIN_PASSWORD="<senha-secreta>" npm run seed
+TEST_AUTH_PASSWORD="<senha-secreta>" npm run smoke:datajud:oab
+```
+
+Use `API_BASE_URL`, `TEST_AUTH_TRIBUNAL`, `SMOKE_EXPECT_MIN_PROCESSES=0` ou `SMOKE_REQUIRE_REAL_DATAJUD=false` para ajustar o escopo em ambientes controlados.
 
 ### Scripts
 
@@ -258,3 +273,34 @@ socket.emit('subscribe', 'id-do-processo');
 ## 📝 Licença
 
 ISC
+
+## Tribunais com restrição de acesso
+
+Quando uma busca por OAB responder com um destes status:
+
+- `requires-auth`
+- `captcha`
+- `blocked`
+- `source_unavailable`
+
+isso significa que a fonte pública daquele tribunal não está liberada para coleta direta nesse fluxo.
+
+### Ação por status
+
+- `requires-auth`
+  - usar login/certificado do advogado com consentimento;
+  - ou integrar parceiro/fonte oficial.
+
+- `captcha`
+  - resolver o captcha manualmente ou em fluxo autorizado;
+  - repetir a coleta com a sessão liberada.
+
+- `blocked` / `source_unavailable`
+  - tentar outro canal oficial;
+  - usar consulta por número do processo;
+  - ou tratar como cobertura parcial do tribunal.
+
+### Exemplo prático
+
+Se `TJMG` responder `requires-auth`, isso não significa erro da API.
+Significa que a API detectou corretamente que a consulta pública daquele caminho exige autenticação adicional.

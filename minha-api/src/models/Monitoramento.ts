@@ -13,7 +13,7 @@ interface MonitoramentoAttributes {
   updatedAt?: Date;
 }
 
-interface MonitoramentoCreationAttributes extends Optional<MonitoramentoAttributes, 'id' | 'ativo' | 'ultimoPoll' | 'createdAt' | 'updatedAt'> {}
+type MonitoramentoCreationAttributes = Optional<MonitoramentoAttributes, 'id' | 'ativo' | 'ultimoPoll' | 'createdAt' | 'updatedAt'>;
 
 class Monitoramento extends Model<MonitoramentoAttributes, MonitoramentoCreationAttributes> implements MonitoramentoAttributes {
   public id!: string;

@@ -24,9 +24,9 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-
-      - name: Install dependencies (root)
-        run: npm ci
+          cache-dependency-path: |
+            minha-api/package-lock.json
+            dashboard/package-lock.json
 
       - name: Install dependencies (backend)
         run: cd minha-api && npm ci
@@ -84,6 +84,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
+          cache-dependency-path: minha-api/package-lock.json
 
       - name: Install dependencies (backend)
         run: cd minha-api && npm ci
@@ -120,9 +121,9 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-
-      - name: Install dependencies (root)
-        run: npm ci
+          cache-dependency-path: |
+            minha-api/package-lock.json
+            dashboard/package-lock.json
 
       - name: Install dependencies (backend)
         run: cd minha-api && npm ci
@@ -158,12 +159,15 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
+          cache-dependency-path: |
+            minha-api/package-lock.json
+            dashboard/package-lock.json
 
-      - name: Run npm audit
-        run: |
-          npm audit --audit-level=high
-          cd minha-api && npm audit --audit-level=high || true
-          cd dashboard && npm audit --audit-level=high || true
+      - name: Run npm audit (backend)
+        run: cd minha-api && npm audit --audit-level=high || true
+
+      - name: Run npm audit (frontend)
+        run: cd dashboard && npm audit --audit-level=high || true
 
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master

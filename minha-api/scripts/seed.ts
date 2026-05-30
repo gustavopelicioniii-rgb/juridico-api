@@ -1,8 +1,7 @@
 import { sequelize } from '../src/models';
 import Tribunal from '../src/models/Tribunal';
-import Advogado from '../src/models/Advogado';
-import bcrypt from 'bcryptjs';
 import { listarTribunaisDataJud } from '../src/config/datajudTribunais';
+import { ensureAdminSeed } from '../src/services/AdminSeedService';
 
 const seedTribunais = async (): Promise<void> => {
   const tribunaisData = listarTribunaisDataJud();
@@ -20,26 +19,20 @@ const seedTribunais = async (): Promise<void> => {
 };
 
 const seedSampleAdvogado = async (): Promise<void> => {
-  const oab = process.env.ADMIN_OAB;
-  const password = process.env.ADMIN_PASSWORD;
+  const result = await ensureAdminSeed({
+    oab: process.env.ADMIN_OAB,
+    password: process.env.ADMIN_PASSWORD,
+    nome: process.env.ADMIN_NOME,
+    email: process.env.ADMIN_EMAIL,
+  });
 
-  if (!oab || !password) {
+  if (result.skipped) {
     console.log('⏭️  Admin seed skipped (set ADMIN_OAB and ADMIN_PASSWORD to create)');
     return;
   }
 
-  const senhaHash = await bcrypt.hash(password, 12);
-  const [advogado, created] = await Advogado.findOrCreate({
-    where: { oab },
-    defaults: {
-      oab,
-      nome: process.env.ADMIN_NOME || 'Administrador',
-      email: process.env.ADMIN_EMAIL,
-      ativo: true,
-      passwordHash: senhaHash,
-    },
-  });
-  console.log(`${created ? '✅ Created' : '📝 Found'}: Advogado ${advogado.nome} (${advogado.oab})`);
+  const advogado = result.advogado!;
+  console.log(`${result.created ? '✅ Created' : '📝 Updated'}: Advogado ${advogado.nome} (${advogado.oab})`);
 };
 
 const main = async (): Promise<void> => {

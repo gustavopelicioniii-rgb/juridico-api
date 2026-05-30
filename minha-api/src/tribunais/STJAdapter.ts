@@ -10,6 +10,9 @@ import logger from '../config/logger';
 import axios from 'axios';
 import { load } from 'cheerio';
 
+const getErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
 interface STJProcesso {
   numero: string;
   classe?: string;
@@ -55,9 +58,10 @@ export class STJAdapter extends BaseTribunalAdapter {
       });
       
       return this.parseHtml(response.data, numeroFormatado);
-    } catch (error: any) {
-      logger.error(`Erro ao buscar processo STJ ${numeroFormatado}:`, error.message);
-      throw new Error(`Falha ao buscar processo no STJ: ${error.message}`);
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
+      logger.error(`Erro ao buscar processo STJ ${numeroFormatado}:`, message);
+      throw new Error(`Falha ao buscar processo no STJ: ${message}`);
     }
   }
   

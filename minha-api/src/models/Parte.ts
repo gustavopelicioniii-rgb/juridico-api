@@ -14,7 +14,7 @@ interface ParteAttributes {
   updatedAt?: Date;
 }
 
-interface ParteCreationAttributes extends Optional<ParteAttributes, 'id' | 'documento' | 'isAdvogado' | 'createdAt' | 'updatedAt'> {}
+type ParteCreationAttributes = Optional<ParteAttributes, 'id' | 'documento' | 'isAdvogado' | 'createdAt' | 'updatedAt'>;
 
 class Parte extends Model<ParteAttributes, ParteCreationAttributes> implements ParteAttributes {
   public id!: string;

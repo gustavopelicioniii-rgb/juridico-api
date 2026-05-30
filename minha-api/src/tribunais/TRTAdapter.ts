@@ -10,6 +10,18 @@ import logger from '../config/logger';
 import axios from 'axios';
 import { load } from 'cheerio';
 
+interface TRTProcesso {
+  numero: string;
+  classe?: string;
+  assunto?: string;
+  dataDistribuicao?: string;
+  partes: Array<{ tipo: string; nome: string }>;
+  movimentacoes: Array<{ data: string; descricao: string }>;
+}
+
+const getErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
 export class TRTAdapter extends BaseTribunalAdapter {
   codigo = 'TRT';
   usaCaptcha = false;
@@ -47,8 +59,8 @@ export class TRTAdapter extends BaseTribunalAdapter {
       });
       
       return this.parseHtml(response.data, numeroFormatado);
-    } catch (error: any) {
-      logger.error(`Erro ao buscar processo TRT-${this.regiao}:`, error.message);
+    } catch (error: unknown) {
+      logger.error(`Erro ao buscar processo TRT-${this.regiao}:`, getErrorMessage(error));
       throw new Error(`Falha ao buscar processo no TRT-${this.regiao}`);
     }
   }
@@ -59,7 +71,7 @@ export class TRTAdapter extends BaseTribunalAdapter {
   private parseHtml(html: string, numero: string): DadosProcesso {
     const $ = load(html);
     
-    const processo: any = {
+    const processo: TRTProcesso = {
       numero,
       partes: [],
       movimentacoes: [],
@@ -94,13 +106,13 @@ export class TRTAdapter extends BaseTribunalAdapter {
     });
     
     // Mapeia para formato padronizado
-    const partes: DadosParte[] = processo.partes.map((p: any) => ({
+    const partes: DadosParte[] = processo.partes.map((p) => ({
       nome: p.nome,
       tipo: this.mapearTipoParte(p.tipo),
       isAdvogado: p.tipo.toLowerCase().includes('advogado'),
     }));
     
-    const movimentacoes: DadosMovimentacao[] = processo.movimentacoes.map((m: any) => ({
+    const movimentacoes: DadosMovimentacao[] = processo.movimentacoes.map((m) => ({
       data: new Date(this.parseData(m.data)),
       descricao: m.descricao,
       origem: `TRT-${this.regiao}`,

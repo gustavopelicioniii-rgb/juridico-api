@@ -12,8 +12,8 @@ interface OABMonitoradaAttributes {
   updatedAt?: Date;
 }
 
-interface OABMonitoradaCreationAttributes
-  extends Optional<OABMonitoradaAttributes, 'id' | 'ativo' | 'intervaloMinutos' | 'usuarioId' | 'ultimaVerificacao' | 'createdAt' | 'updatedAt'> {}
+type OABMonitoradaCreationAttributes =
+  Optional<OABMonitoradaAttributes, 'id' | 'ativo' | 'intervaloMinutos' | 'usuarioId' | 'ultimaVerificacao' | 'createdAt' | 'updatedAt'>;
 
 class OABMonitorada
   extends Model<OABMonitoradaAttributes, OABMonitoradaCreationAttributes>

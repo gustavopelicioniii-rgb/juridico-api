@@ -91,7 +91,7 @@ router.post('/login', async (req: Request, res: Response) => {
         email: advogado.email,
       },
     });
-  } catch (error) {
+  } catch {
     res.status(500).json({
       erro: { codigo: 'LOGIN_ERROR', mensagem: 'Erro ao realizar login.' }
     });
@@ -164,7 +164,7 @@ router.post('/register', async (req: Request, res: Response) => {
         email: advogado.email,
       },
     });
-  } catch (error) {
+  } catch {
     res.status(500).json({
       erro: { codigo: 'REGISTER_ERROR', mensagem: 'Erro ao criar conta.' }
     });
@@ -210,7 +210,7 @@ router.post('/refresh', async (req: Request, res: Response) => {
         erro: { codigo: 'INVALID_REFRESH_TOKEN', mensagem: 'Refresh token inválido ou expirado.' }
       });
     }
-  } catch (error) {
+  } catch {
     res.status(500).json({
       erro: { codigo: 'REFRESH_ERROR', mensagem: 'Erro ao renovar token.' }
     });
@@ -283,7 +283,7 @@ router.get('/me', async (req: Request, res: Response) => {
       email: advogado.email,
       role: decoded.role,
     });
-  } catch (error) {
+  } catch {
     res.status(500).json({
       erro: { codigo: 'ME_ERROR', mensagem: 'Erro ao buscar dados do usuário.' }
     });

@@ -29,6 +29,34 @@ const MAX_PARALLEL_FETCHES = 5; // Paralelo para produção
 const ENRICHMENT_TIMEOUT_MS = 45000; // Crawlers públicos podem oscilar por processo
 const UF_PREFIX_REGEX = /^(AC|AL|AM|AP|BA|CE|DF|ES|GO|MA|MG|MS|MT|PA|PB|PE|PI|PR|RJ|RN|RO|RR|RS|SC|SE|SP|TO)/;
 
+type ProcessoPersistData = {
+  numeroProcesso: string;
+  tribunalId: string;
+  advogadoId?: string;
+  status: 'MONITORANDO';
+  classe?: string;
+  classeCodigo?: number;
+  assunto?: string;
+  assuntoPrincipal?: string;
+  instancia: 'PRIMEIRA' | 'SEGUNDA' | 'SUPERIOR';
+  primeiraInstancia?: Date;
+  dataAjuizamento?: Date;
+  valorCausa?: number;
+  orgaoJulgador?: string;
+  orgaoJulgadorCodigo?: number;
+  nivelSigilo?: number;
+  sistema?: string;
+  formato?: string;
+  ultimaMovimentacao?: Date;
+  dadosOriginais: Record<string, unknown>;
+  enriquecido: boolean;
+};
+
+type ProcessoUpdateData = Partial<Omit<ProcessoPersistData, 'numeroProcesso' | 'tribunalId' | 'status' | 'instancia'>> & {
+  advogadoId?: string;
+  enriquecido: boolean;
+};
+
 /**
  * Executa função com timeout
  */
@@ -118,7 +146,7 @@ class TribunalService {
       let processo: Processo;
 
       if (ehNovo) {
-        const createData: any = {
+        const createData: ProcessoPersistData = {
           numeroProcesso: dadosProcesso.numeroProcesso,
           tribunalId: tribunal.id,
           status: 'MONITORANDO',
@@ -147,7 +175,7 @@ class TribunalService {
         logger.info(`Novo processo criado: ${processo.numeroProcesso}`);
       } else {
         processo = processoExistente;
-        const updateData: any = {
+        const updateData: ProcessoUpdateData = {
           classe: dadosProcesso.classe || processo.classe,
           assunto: dadosProcesso.assunto || processo.assunto,
           assuntoPrincipal: dadosProcesso.assuntoPrincipal || processo.assuntoPrincipal,

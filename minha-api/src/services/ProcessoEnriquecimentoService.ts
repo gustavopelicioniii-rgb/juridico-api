@@ -27,6 +27,9 @@ interface ResultadoOAB {
   atualizados: string[];
 }
 
+const getErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
 async function buscarPorOABEnriquecido(
   oab: string,
   _enriquecer = true,
@@ -59,7 +62,7 @@ async function buscarPorOABEnriquecido(
           numerosProcessos.push(proc.numeroProcesso);
         }
       }
-    } catch (error) {
+    } catch {
       logger.warn('[Enriquecimento] Erro ao buscar lista em ' + tribunalCodigo);
     }
   }
@@ -74,7 +77,7 @@ async function buscarPorOABEnriquecido(
     raw: true,
   });
 
-  const numerosExistentes = new Set(existente.map((p: any) => p.numeroProcesso));
+  const numerosExistentes = new Set(existente.map(p => p.numeroProcesso));
   const numerosNovos = numerosProcessos.filter(n => !numerosExistentes.has(n));
   const numerosAtualizar = numerosProcessos.filter(n => numerosExistentes.has(n));
 
@@ -96,7 +99,7 @@ async function buscarPorOABEnriquecido(
           });
           break;
         }
-      } catch (error) {
+      } catch {
         logger.warn('[Enriquecimento] Erro ao enriquecer ' + numero + ' em ' + tribunalCodigo);
       }
     }
@@ -127,7 +130,7 @@ async function salvarLoteProcessos(
         advogadoId
       );
       salvos++;
-    } catch (error) {
+    } catch {
       logger.error('[Enriquecimento] Erro ao salvar ' + processo.numeroProcesso);
       erros++;
     }
@@ -147,9 +150,9 @@ async function salvarProcessoEnriquecido(
       advogadoId
     );
     return { sucesso: true };
-  } catch (error: any) {
+  } catch (error) {
     logger.error('[Enriquecimento] Erro ao salvar ' + processo.numeroProcesso);
-    return { sucesso: false, erro: error.message };
+    return { sucesso: false, erro: getErrorMessage(error) };
   }
 }
 

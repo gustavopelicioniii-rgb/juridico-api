@@ -15,8 +15,6 @@ import { notificationService } from './websocket';
 import { requestIdMiddleware, metricsMiddleware, register } from './middleware/metrics';
 import { authMiddleware, validateAuthConfig } from './middleware/auth';
 import Tribunal from './models/Tribunal';
-import Advogado from './models/Advogado';
-import bcrypt from 'bcryptjs';
 import MonitoringService from './services/MonitoringService';
 import ProcessoMonitoramentoService from './services/ProcessoMonitoramentoService';
 import ngrokService from './services/NgrokService';
@@ -25,11 +23,13 @@ import { listarTribunaisDataJud } from './config/datajudTribunais';
 import { DEFAULT_MONITORING_POLL_INTERVAL_MS } from './config/monitoring';
 import { validateDataJudProductionConfig } from './config/datajud';
 import DataJudHealthService from './services/DataJudHealthService';
+import { ensureAdminSeed } from './services/AdminSeedService';
 
 dotenv.config();
 
 const app: Application = express();
 const PORT = process.env.PORT || 3000;
+type RequestWithRequestId = Request & { requestId?: string };
 
 // NecessÃ¡rio atrÃ¡s de ngrok/proxies para rate-limit usar o IP correto.
 app.set('trust proxy', 1);
@@ -105,8 +105,9 @@ app.get('/metrics', async (_req: Request, res: Response) => {
   try {
     res.set('Content-Type', register.contentType);
     res.end(await register.metrics());
-  } catch (err: any) {
-    res.status(500).end(err.message);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown metrics error';
+    res.status(500).end(message);
   }
 });
 
@@ -177,8 +178,9 @@ app.post('/api/v1/ngrok/start', authMiddleware, async (_req: Request, res: Respo
     } else {
       res.status(503).json({ erro: { codigo: 'NGROK_ERROR', mensagem: 'Falha ao iniciar tunel ngrok. Verifique NGROK_AUTHTOKEN.' } });
     }
-  } catch (error: any) {
-    res.status(503).json({ erro: { codigo: 'NGROK_ERROR', mensagem: error.message } });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Falha ao iniciar tunel ngrok.';
+    res.status(503).json({ erro: { codigo: 'NGROK_ERROR', mensagem: message } });
   }
 });
 
@@ -217,7 +219,7 @@ app.use((_req: Request, res: Response) => {
 
 // Error handler com diferenciaÃ§Ã£o de tipos
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-  const requestId = (_req as any).requestId;
+  const requestId = (_req as RequestWithRequestId).requestId;
 
   if (err instanceof z.ZodError) {
     logger.warn('Validation error:', { requestId, errors: err.issues });
@@ -282,25 +284,19 @@ const autoSeed = async () => {
   }
   logger.info('Seed: tribunais verificados');
 
-  const adminOab = process.env.ADMIN_OAB;
-  const adminPassword = process.env.ADMIN_PASSWORD;
-  if (!adminOab || !adminPassword) {
+  const result = await ensureAdminSeed({
+    oab: process.env.ADMIN_OAB,
+    password: process.env.ADMIN_PASSWORD,
+    nome: process.env.ADMIN_NOME,
+    email: process.env.ADMIN_EMAIL,
+  });
+
+  if (result.skipped) {
     logger.info('Seed: admin ignorado (defina ADMIN_OAB e ADMIN_PASSWORD para criar usuÃ¡rio inicial)');
     return;
   }
 
-  const senhaHash = await bcrypt.hash(adminPassword, 12);
-  await Advogado.findOrCreate({
-    where: { oab: adminOab },
-    defaults: {
-      oab: adminOab,
-      nome: process.env.ADMIN_NOME || 'Administrador',
-      email: process.env.ADMIN_EMAIL,
-      ativo: true,
-      passwordHash: senhaHash,
-    },
-  });
-  logger.info(`Seed: usuÃ¡rio admin verificado (${adminOab})`);
+  logger.info(`Seed: usuÃ¡rio admin ${result.created ? 'criado' : 'atualizado'} (${result.advogado?.oab})`);
 };
 
 // Start server
@@ -376,4 +372,3 @@ const startServer = async () => {
 };
 
 export { app, httpServer, startServer };
-

@@ -15,7 +15,7 @@ interface NotificationAttributes {
   updatedAt?: Date;
 }
 
-interface NotificationCreationAttributes extends Optional<NotificationAttributes, 'id' | 'processoId' | 'dados' | 'lida' | 'createdAt' | 'updatedAt'> {}
+type NotificationCreationAttributes = Optional<NotificationAttributes, 'id' | 'processoId' | 'dados' | 'lida' | 'createdAt' | 'updatedAt'>;
 
 class Notification extends Model<NotificationAttributes, NotificationCreationAttributes> implements NotificationAttributes {
   public id!: string;

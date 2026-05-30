@@ -11,7 +11,7 @@ interface OABBuscaCacheAttributes {
   expiraEm: Date;
 }
 
-interface OABBuscaCacheCreationAttributes extends Optional<OABBuscaCacheAttributes, 'id' | 'criadoEm' | 'expiraEm'> {}
+type OABBuscaCacheCreationAttributes = Optional<OABBuscaCacheAttributes, 'id' | 'criadoEm' | 'expiraEm'>;
 
 class OABBuscaCache extends Model<OABBuscaCacheAttributes, OABBuscaCacheCreationAttributes> implements OABBuscaCacheAttributes {
   public id!: string;

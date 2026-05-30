@@ -80,6 +80,9 @@ type BuscaOABStatus = 'success' | 'empty' | 'captcha' | 'requires-auth' | 'block
 
 const ALL_TRIBUNALS_CODES = new Set(['TODOS', 'ALL', 'NACIONAL', 'BRASIL']);
 
+const getErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
 const buildAcaoRequerida = (fonte?: {
   fonte: string;
   status: string;
@@ -249,7 +252,7 @@ router.get('/tribunais/batch-status', requireRole('ADMIN'), async (req: Request,
     });
 
     res.json({ tribunais });
-  } catch (error) {
+  } catch {
     res.status(500).json({ erro: { codigo: 'BATCH_STATUS_ERROR', mensagem: 'Erro ao verificar status.' } });
   }
 });
@@ -288,7 +291,7 @@ router.get('/advogados/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ erro: { codigo: 'ADVOGADO_NAO_ENCONTRADO', mensagem: 'Advogado nÃ£o encontrado.' } });
     }
     res.json({ advogado });
-  } catch (error) {
+  } catch {
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar advogado.' } });
   }
 });
@@ -353,7 +356,7 @@ router.get('/advogados/:id/onboarding-status', async (req: Request, res: Respons
     const { default: AdvogadoOnboardingService } = await import('../services/AdvogadoOnboardingService');
     const status = await AdvogadoOnboardingService.getStatusByAdvogadoId(advogado.id);
     res.json({ status });
-  } catch (error) {
+  } catch {
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao criar advogado.' } });
   }
 });
@@ -374,7 +377,7 @@ router.put('/advogados/:id', async (req: Request, res: Response) => {
     await advogado.update({ nome, email, ativo });
     
     res.json({ advogado });
-  } catch (error) {
+  } catch {
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao atualizar advogado.' } });
   }
 });
@@ -392,7 +395,7 @@ router.delete('/advogados/:id', async (req: Request, res: Response) => {
     
     await advogado.update({ ativo: false });
     res.json({ mensagem: 'Advogado desativado com sucesso.' });
-  } catch (error) {
+  } catch {
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao desativar advogado.' } });
   }
 });
@@ -407,7 +410,7 @@ router.get('/processos', async (req: Request, res: Response) => {
       return res.status(scoped.status).json(scoped.body);
     }
     
-    const where: any = {};
+    const where: Record<string, unknown> = {};
     if (scoped.advogadoId) where.advogadoId = scoped.advogadoId;
     if (tribunalId) where.tribunalId = tribunalId;
     if (status) where.status = status;
@@ -461,7 +464,7 @@ router.get('/processos/:id', async (req: Request, res: Response) => {
     }
     
     res.json({ processo });
-  } catch (error) {
+  } catch {
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar processo.' } });
   }
 });
@@ -644,7 +647,7 @@ router.post('/processos', async (req: Request, res: Response) => {
     });
     
     res.status(201).json({ processo });
-  } catch (error) {
+  } catch {
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao criar processo.' } });
   }
 });
@@ -661,7 +664,7 @@ router.delete('/processos/:id', async (req: Request, res: Response) => {
     await processo.destroy();
     
     res.json({ mensagem: 'Processo removido com sucesso.' });
-  } catch (error) {
+  } catch {
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao remover processo.' } });
   }
 });
@@ -676,12 +679,13 @@ router.get('/processos/:id/movimentacoes', async (req: Request, res: Response) =
     }
     const { pagina = 1, limite = 50, data_inicio, data_fim } = req.query;
     
-    const where: any = { processoId: req.params.id };
+    const where: Record<string, unknown> = { processoId: req.params.id };
     
     if (data_inicio || data_fim) {
-      where.data = {};
-      if (data_inicio) where.data[Op.gte] = new Date(data_inicio as string);
-      if (data_fim) where.data[Op.lte] = new Date(data_fim as string);
+      const dataFilter: Record<symbol, Date> = {};
+      if (data_inicio) dataFilter[Op.gte] = new Date(data_inicio as string);
+      if (data_fim) dataFilter[Op.lte] = new Date(data_fim as string);
+      where.data = dataFilter;
     }
     
     const offset = (Number(pagina) - 1) * Number(limite);
@@ -702,7 +706,7 @@ router.get('/processos/:id/movimentacoes', async (req: Request, res: Response) =
         paginas: Math.ceil(count / Number(limite)),
       },
     });
-  } catch (error) {
+  } catch {
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar movimentaÃ§Ãµes.' } });
   }
 });
@@ -725,7 +729,7 @@ router.get('/processos/:id/movimentacoes/novas', async (req: Request, res: Respo
     );
     
     res.json({ movimentacoes });
-  } catch (error) {
+  } catch {
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar movimentaÃ§Ãµes.' } });
   }
 });
@@ -742,7 +746,7 @@ router.get('/processos/:id/partes', async (req: Request, res: Response) => {
     });
     
     res.json({ partes });
-  } catch (error) {
+  } catch {
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar partes.' } });
   }
 });
@@ -757,7 +761,7 @@ router.get('/monitoramentos', async (req: Request, res: Response) => {
       return res.status(scoped.status).json(scoped.body);
     }
 
-    const where: any = {};
+    const where: Record<string, unknown> = {};
     if (scoped.advogadoId) where.advogadoId = scoped.advogadoId;
     if (ativo !== undefined) where.ativo = ativo === 'true';
     
@@ -770,7 +774,7 @@ router.get('/monitoramentos', async (req: Request, res: Response) => {
     });
     
     res.json({ monitoramentos });
-  } catch (error) {
+  } catch {
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar monitoramentos.' } });
   }
 });
@@ -808,7 +812,7 @@ router.post('/processos/:id/monitorar', async (req: Request, res: Response) => {
     });
     
     res.status(201).json({ monitoramento });
-  } catch (error) {
+  } catch {
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao criar monitoramento.' } });
   }
 });
@@ -830,7 +834,7 @@ router.delete('/processos/:id/monitorar', async (req: Request, res: Response) =>
     
     await monitoramento.update({ ativo: false });
     res.json({ mensagem: 'Monitoramento desativado com sucesso.' });
-  } catch (error) {
+  } catch {
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao desativar monitoramento.' } });
   }
 });
@@ -895,9 +899,10 @@ router.post('/tribunais/:codigo/buscar', async (req: Request, res: Response) => 
       totalMovimentacoes: resultado.totalMovimentacoes,
       novasMovimentacoes: resultado.novasMovimentacoes,
     });
-  } catch (error: any) {
-    if (error.message.includes('nÃ£o suportado') || error.message.includes('nÃ£o encontrado')) {
-      return res.status(400).json({ erro: { codigo: 'TRIBUNAL_ERROR', mensagem: error.message } });
+  } catch (error) {
+    const message = getErrorMessage(error);
+    if (message.includes('nÃ£o suportado') || message.includes('nÃ£o encontrado')) {
+      return res.status(400).json({ erro: { codigo: 'TRIBUNAL_ERROR', mensagem: message } });
     }
     res.status(500).json({ erro: { codigo: 'SCRAPE_ERROR', mensagem: 'Erro ao buscar processo.' } });
   }
@@ -962,8 +967,8 @@ router.post('/tribunais/:codigo/buscar-oab', async (req: Request, res: Response)
       motivo: fonteBloqueante?.mensagem,
       acaoRequerida,
     });
-  } catch (error: any) {
-    logger.error(`Erro ao buscar OAB: ${error.message}`);
+  } catch (error) {
+    logger.error(`Erro ao buscar OAB: ${getErrorMessage(error)}`);
     res.status(500).json({ erro: { codigo: 'SCRAPE_ERROR', mensagem: 'Erro ao buscar por OAB.' } });
   }
 });
@@ -1067,11 +1072,12 @@ router.post('/tribunais/:codigo/buscar-oab/async', async (req: Request, res: Res
         ? `Busca nacional por OAB agendada em ${tribunaisAlvo.length} tribunais. Os processos serÃ£o salvos em background.`
         : 'Busca por OAB agendada. Os processos serÃ£o salvos em background.',
     });
-  } catch (error: any) {
+  } catch (error) {
+    const message = getErrorMessage(error);
     if (auditJob) {
       await auditJob.update({
         status: 'FALHO',
-        erro: error.message,
+        erro: message,
         completedAt: new Date(),
       });
     }
@@ -1111,7 +1117,7 @@ router.post('/tribunais/:codigo/processos/:numero/refresh', async (req: Request,
       processo: resultado.processo,
       novasMovimentacoes: resultado.novasMovimentacoes,
     });
-  } catch (error: any) {
+  } catch {
     res.status(500).json({ erro: { codigo: 'REFRESH_ERROR', mensagem: 'Erro ao atualizar processo.' } });
   }
 });
@@ -1136,7 +1142,7 @@ router.get('/tribunais/:codigo/status', async (req: Request, res: Response) => {
       usaCaptcha: adapter.usaCaptcha,
       status: healthy ? 'ONLINE' : 'OFFLINE',
     });
-  } catch (error) {
+  } catch {
     res.status(500).json({ erro: { codigo: 'STATUS_ERROR', mensagem: 'Erro ao verificar status.' } });
   }
 });
@@ -1147,7 +1153,7 @@ router.get('/jobs', requireRole('ADMIN'), async (req: Request, res: Response) =>
   try {
     const { status, tipo, limite = 50 } = req.query;
 
-    const where: any = {};
+    const where: Record<string, unknown> = {};
     if (status) where.status = status;
     if (tipo) where.tipo = tipo;
 
@@ -1176,7 +1182,7 @@ router.get('/jobs/:id', requireRole('ADMIN'), async (req: Request, res: Response
     }
 
     res.json({ job });
-  } catch (error) {
+  } catch {
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar job.' } });
   }
 });
@@ -1192,7 +1198,7 @@ router.post('/jobs/:id/retry', requireRole('ADMIN'), async (req: Request, res: R
     await job.update({ status: 'PENDENTE', tentativas: 0, erro: undefined });
 
     res.json({ job });
-  } catch (error) {
+  } catch {
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao retry job.' } });
   }
 });
@@ -1207,7 +1213,7 @@ router.get('/notifications', async (req: Request, res: Response) => {
       return res.status(scoped.status).json(scoped.body);
     }
 
-    const where: any = {};
+    const where: Record<string, unknown> = {};
     if (scoped.advogadoId) where.advogadoId = scoped.advogadoId;
     if (lida !== undefined) where.lida = lida === 'true';
 
@@ -1218,7 +1224,7 @@ router.get('/notifications', async (req: Request, res: Response) => {
     });
 
     res.json({ notifications });
-  } catch (error) {
+  } catch {
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao buscar notifications.' } });
   }
 });
@@ -1239,7 +1245,7 @@ router.put('/notifications/:id/read', async (req: Request, res: Response) => {
 
     await notification.update({ lida: true });
     res.json({ notification });
-  } catch (error) {
+  } catch {
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao marcar notification.' } });
   }
 });
@@ -1252,12 +1258,12 @@ router.put('/notifications/read-all', async (req: Request, res: Response) => {
       return res.status(scoped.status).json(scoped.body);
     }
 
-    const where: any = { lida: false };
+    const where: Record<string, unknown> = { lida: false };
     if (scoped.advogadoId) where.advogadoId = scoped.advogadoId;
 
     await Notification.update({ lida: true }, { where });
     res.json({ mensagem: 'Todas marcadas como lidas.' });
-  } catch (error) {
+  } catch {
     res.status(500).json({ erro: { codigo: 'DB_ERROR', mensagem: 'Erro ao marcar notifications.' } });
   }
 });
@@ -1273,7 +1279,7 @@ router.get('/advogados/:id/processos', async (req: Request, res: Response) => {
       return res.status(scoped.status).json(scoped.body);
     }
 
-    const where: any = { advogadoId: scoped.advogadoId || id };
+    const where: Record<string, unknown> = { advogadoId: scoped.advogadoId || id };
     if (tribunalId) where.tribunalId = tribunalId;
     if (status) where.status = status;
 
@@ -1305,7 +1311,7 @@ router.get('/dashboard/stats', async (req: Request, res: Response) => {
     }
     const scopedAdvogadoId = scoped.advogadoId;
 
-    const whereAdv: any = { ativo: true };
+    const whereAdv: Record<string, unknown> = { ativo: true };
     if (scopedAdvogadoId) whereAdv.id = scopedAdvogadoId;
 
     const [totalAdvogados, totalProcessos, jobsPendentes, jobsFalhos, monitoramentosAtivos] = await Promise.all([
@@ -1383,7 +1389,7 @@ router.get('/admin/notifications', requireRole('ADMIN'), async (req: Request, re
 
 router.get('/admin/dashboard/stats', requireRole('ADMIN'), async (req: Request, res: Response) => {
   const { advogadoId } = req.query;
-  const whereAdv: any = { ativo: true };
+  const whereAdv: Record<string, unknown> = { ativo: true };
   if (advogadoId) whereAdv.id = advogadoId;
 
   const [totalAdvogados, totalProcessos, jobsPendentes, jobsFalhos, monitoramentosAtivos] = await Promise.all([
@@ -1409,8 +1415,6 @@ router.get('/admin/dashboard/stats', requireRole('ADMIN'), async (req: Request, 
 });
 
 export { router };
-
-
 
 
 

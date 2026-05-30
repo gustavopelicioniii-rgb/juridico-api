@@ -13,7 +13,7 @@ interface MovimentacaoAttributes {
   updatedAt?: Date;
 }
 
-interface MovimentacaoCreationAttributes extends Optional<MovimentacaoAttributes, 'id' | 'origem' | 'dadosOriginais' | 'createdAt' | 'updatedAt'> {}
+type MovimentacaoCreationAttributes = Optional<MovimentacaoAttributes, 'id' | 'origem' | 'dadosOriginais' | 'createdAt' | 'updatedAt'>;
 
 class Movimentacao extends Model<MovimentacaoAttributes, MovimentacaoCreationAttributes> implements MovimentacaoAttributes {
   public id!: string;

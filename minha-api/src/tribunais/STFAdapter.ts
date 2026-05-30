@@ -10,6 +10,9 @@ import logger from '../config/logger';
 import axios from 'axios';
 import { load } from 'cheerio';
 
+const getErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
 interface STFProcesso {
   numero: string;
   classe?: string;
@@ -53,9 +56,10 @@ export class STFAdapter extends BaseTribunalAdapter {
       });
       
       return this.parseHtml(response.data, numeroFormatado);
-    } catch (error: any) {
-      logger.error(`Erro ao buscar processo STF ${numeroFormatado}:`, error.message);
-      throw new Error(`Falha ao buscar processo no STF: ${error.message}`);
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
+      logger.error(`Erro ao buscar processo STF ${numeroFormatado}:`, message);
+      throw new Error(`Falha ao buscar processo no STF: ${message}`);
     }
   }
   

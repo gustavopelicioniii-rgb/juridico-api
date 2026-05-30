@@ -3,7 +3,7 @@
  * Executa polling periódico para verificar novas movimentações
  */
 
-import { Op } from 'sequelize';
+import { Op, WhereOptions } from 'sequelize';
 import { agendarScraping } from '../queues';
 import Monitoramento from '../models/Monitoramento';
 import Processo from '../models/Processo';
@@ -183,7 +183,7 @@ class MonitoringService {
         sucesso: true,
       };
       
-    } catch (error: any) {
+    } catch (error) {
       logger.error(`Erro ao processar monitoramento ${monitoramento.id}:`, error);
       return {
         processoId: processo.id,
@@ -243,7 +243,7 @@ class MonitoringService {
    * Lista processos sendo monitorados
    */
   async listarMonitoramentos(advogadoId?: string): Promise<Monitoramento[]> {
-    const where: any = { ativo: true };
+    const where: WhereOptions = { ativo: true };
     if (advogadoId) {
       where.advogadoId = advogadoId;
     }

@@ -25,6 +25,9 @@ import {
 import logger from '../config/logger';
 import { buscarPorFontesOficiais, OABSourceLog } from './providers/OABSearchProvider';
 
+const getErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
 const DATAJUD_BASE_URL = 'https://api-publica.datajud.cnj.jus.br';
 const ESAJ_TJSP_BASE_URL = 'https://esaj.tjsp.jus.br';
 
@@ -167,21 +170,21 @@ export class DataJudAdapter extends BaseTribunalAdapter {
         return this.mesclarComDetalhesEsaj(processo, numeroProcesso);
       }
       return processo;
-    } catch (error: any) {
-      if (this.codigo === 'TJSP' && error.response?.status !== 401 && error.response?.status !== 429) {
+    } catch (error: unknown) {
+      if (this.codigo === 'TJSP' && (!axios.isAxiosError(error) || (error.response?.status !== 401 && error.response?.status !== 429))) {
         const detalhesEsaj = await this.buscarProcessoEsajTJSP(numeroProcesso);
         if (detalhesEsaj) return detalhesEsaj;
       }
-      if (error.response?.status === 401) {
+      if (axios.isAxiosError(error) && error.response?.status === 401) {
         throw new Error('DATAJUD_API_KEY inválida ou expirada. Registre-se em: https://www.cnj.jus.br/sistemas/datajud/api-publica/');
       }
-      if (error.response?.status === 429) {
+      if (axios.isAxiosError(error) && error.response?.status === 429) {
         throw new Error('Rate limit DataJud excedido. Aguarde alguns minutos.');
       }
       logger.error(`DataJudAdapter[${this.codigo}] erro ao buscar processo:`, {
         numero: numeroProcesso,
-        status: error.response?.status,
-        data: error.response?.data,
+        status: axios.isAxiosError(error) ? error.response?.status : undefined,
+        data: axios.isAxiosError(error) ? error.response?.data : undefined,
       });
       throw error;
     }
@@ -317,20 +320,20 @@ export class DataJudAdapter extends BaseTribunalAdapter {
         total,
         fontes: sourceLogs,
       };
-    } catch (error: any) {
-      if (error.response?.status === 401) {
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error) && error.response?.status === 401) {
         throw new Error('DATAJUD_API_KEY inválida ou expirada');
       }
-      if (error.response?.status === 429) {
+      if (axios.isAxiosError(error) && error.response?.status === 429) {
         throw new Error('Rate limit DataJud excedido');
       }
-      logger.error(`DataJudAdapter[${this.codigo}] erro ao buscar por OAB:`, { oab, erro: error.message });
+      logger.error(`DataJudAdapter[${this.codigo}] erro ao buscar por OAB:`, { oab, erro: getErrorMessage(error) });
       sourceLogs.push({
         fonte: 'datajud',
         status: 'error',
         tribunalCodigo: this.codigo,
         url: this.baseUrl,
-        mensagem: error.message,
+        mensagem: getErrorMessage(error),
         total: 0,
       });
       return { processos: [], total: 0, fontes: sourceLogs };

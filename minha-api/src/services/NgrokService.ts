@@ -10,6 +10,9 @@ import ngrok, { Listener } from '@ngrok/ngrok';
 import logger from '../config/logger';
 import { notificationService } from '../websocket';
 
+const getErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
 class NgrokService {
   private listener: Listener | null = null;
   private url: string | null = null;
@@ -61,12 +64,13 @@ class NgrokService {
       this.notifyWebSocket(rawUrl);
 
       return rawUrl;
-    } catch (error: any) {
-      logger.error(`NgrokService: Falha ao iniciar tunel: ${error.message}`);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      logger.error(`NgrokService: Falha ao iniciar tunel: ${message}`);
 
-      if (error.message?.includes('auth token')) {
+      if (message.includes('auth token')) {
         logger.error('NgrokService: Auth token inválido. Verifique NGROK_AUTHTOKEN no .env');
-      } else if (error.message?.includes('session failed') || error.message?.includes('connection refused')) {
+      } else if (message.includes('session failed') || message.includes('connection refused')) {
         logger.error('NgrokService: Verifique se o servidor está rodando na porta ' + port);
       }
 
@@ -121,8 +125,8 @@ class NgrokService {
       if (this.listener && typeof this.listener?.close === 'function') {
         await this.listener.close();
       }
-    } catch (error: any) {
-      logger.warn(`NgrokService: Erro ao parar tunel: ${error.message}`);
+    } catch (error) {
+      logger.warn(`NgrokService: Erro ao parar tunel: ${getErrorMessage(error)}`);
     } finally {
       this.listener = null;
       this.url = null;

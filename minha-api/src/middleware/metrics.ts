@@ -6,6 +6,8 @@ import { Request, Response, NextFunction } from 'express';
 import { randomUUID } from 'crypto';
 import client from 'prom-client';
 
+type RequestWithId = Request & { requestId?: string };
+
 const register = new client.Registry();
 
 client.collectDefaultMetrics({ register });
@@ -42,7 +44,8 @@ export const scrapingDuration = new client.Histogram({
 
 export function requestIdMiddleware(req: Request, _res: Response, next: NextFunction): void {
   const requestId = (req.headers['x-request-id'] as string) || randomUUID();
-  (req as any).requestId = requestId;
+  const requestWithId = req as RequestWithId;
+  requestWithId.requestId = requestId;
   next();
 }
 

@@ -8,6 +8,7 @@ import { registry } from '../tribunais';
 import TribunalService from '../services/TribunalService';
 import FirecrawlEnrichmentService from '../services/FirecrawlEnrichmentService';
 import logger from '../config/logger';
+import { getRedisUrl } from '../config/redis';
 import ProcessoMonitoramentoService from '../services/ProcessoMonitoramentoService';
 import Monitoramento from '../models/Monitoramento';
 import Processo from '../models/Processo';
@@ -17,7 +18,7 @@ import notificationService from '../websocket/NotificationService';
 import { derivarTribunaisPorOAB } from '../utils/derivarTribunaisPorOAB';
 
 // Configuração da fila
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+const REDIS_URL = getRedisUrl();
 
 export interface ScrapeJobData {
   tipo?: 'PROCESSO' | 'INITIAL_OAB_CRAWL' | 'OAB_CRAWL' | 'FIRECRAWL_AUX';
