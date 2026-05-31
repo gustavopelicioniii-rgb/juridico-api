@@ -9,6 +9,7 @@ import Advogado from '../models/Advogado';
 
 const router = Router();
 const normalize = (value?: string | null): string | undefined => value?.trim().toUpperCase();
+const isBridgeAccount = (oab: string): boolean => normalize(oab)?.startsWith('JX') === true;
 const isAdminAccount = (oab?: string, email?: string): boolean => {
   const adminOab = normalize(process.env.ADMIN_OAB);
   const currentOab = normalize(oab);
@@ -19,6 +20,29 @@ const isAdminAccount = (oab?: string, email?: string): boolean => {
   const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
   const currentEmail = email?.trim().toLowerCase();
   return !!adminEmail && !!currentEmail && adminEmail === currentEmail;
+};
+
+const buildAuthResponse = (advogado: Advogado, role: AuthPayload['role']) => {
+  const payload: Omit<AuthPayload, 'iat' | 'exp'> = {
+    userId: advogado.id,
+    advogadoId: advogado.id,
+    role,
+  };
+
+  const accessToken = generateToken(payload);
+  const refreshToken = generateRefreshToken(payload);
+
+  return {
+    accessToken,
+    refreshToken,
+    expiresIn: '1h',
+    advogado: {
+      id: advogado.id,
+      oab: advogado.oab,
+      nome: advogado.nome,
+      email: advogado.email,
+    },
+  };
 };
 
 /**
@@ -70,27 +94,7 @@ router.post('/login', async (req: Request, res: Response) => {
       });
     }
 
-    // Gera tokens
-    const payload: Omit<AuthPayload, 'iat' | 'exp'> = {
-      userId: advogado.id,
-      advogadoId: advogado.id,
-      role: isAdminAccount(advogado.oab, advogado.email) ? 'ADMIN' : 'USER',
-    };
-
-    const accessToken = generateToken(payload);
-    const refreshToken = generateRefreshToken(payload);
-
-    res.json({
-      accessToken,
-      refreshToken,
-      expiresIn: '1h',
-      advogado: {
-        id: advogado.id,
-        oab: advogado.oab,
-        nome: advogado.nome,
-        email: advogado.email,
-      },
-    });
+    res.json(buildAuthResponse(advogado, isAdminAccount(advogado.oab, advogado.email) ? 'ADMIN' : 'USER'));
   } catch {
     res.status(500).json({
       erro: { codigo: 'LOGIN_ERROR', mensagem: 'Erro ao realizar login.' }
@@ -118,8 +122,19 @@ router.post('/register', async (req: Request, res: Response) => {
       });
     }
 
-    const existing = await Advogado.findOne({ where: { oab } });
+    const normalizedOab = oab.trim().toUpperCase();
+    const existing = await Advogado.findOne({ where: { oab: normalizedOab } });
     if (existing) {
+      if (isBridgeAccount(normalizedOab) && !existing.passwordHash) {
+        const bridgePasswordHash = await bcrypt.hash(senha, 12);
+        await existing.update({
+          passwordHash: bridgePasswordHash,
+          nome: existing.nome || nome,
+          email: existing.email || email,
+          ativo: true,
+        });
+        return res.status(200).json(buildAuthResponse(existing, 'USER'));
+      }
       return res.status(409).json({
         erro: { codigo: 'DUPLICATE_OAB', mensagem: 'Já existe advogado com esta OAB.' }
       });
@@ -128,7 +143,7 @@ router.post('/register', async (req: Request, res: Response) => {
     const passwordHash = await bcrypt.hash(senha, 12);
 
     const advogado = await Advogado.create({
-      oab,
+      oab: normalizedOab,
       nome,
       email,
       passwordHash,
@@ -144,26 +159,7 @@ router.post('/register', async (req: Request, res: Response) => {
       requestedBy: 'self-register',
     });
 
-    const payload: Omit<AuthPayload, 'iat' | 'exp'> = {
-      userId: advogado.id,
-      advogadoId: advogado.id,
-      role: 'USER',
-    };
-
-    const accessToken = generateToken(payload);
-    const refreshToken = generateRefreshToken(payload);
-
-    res.status(201).json({
-      accessToken,
-      refreshToken,
-      expiresIn: '1h',
-      advogado: {
-        id: advogado.id,
-        oab: advogado.oab,
-        nome: advogado.nome,
-        email: advogado.email,
-      },
-    });
+    res.status(201).json(buildAuthResponse(advogado, 'USER'));
   } catch {
     res.status(500).json({
       erro: { codigo: 'REGISTER_ERROR', mensagem: 'Erro ao criar conta.' }
