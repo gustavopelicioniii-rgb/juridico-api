@@ -33,12 +33,13 @@ export async function ensureAdminSeed(params: EnsureAdminSeedParams): Promise<En
 
   const existing = await Advogado.findOne({ where: { oab } });
   if (existing) {
-    await existing.update({
+    const updates = {
       nome,
       email,
       ativo: true,
-      passwordHash: senhaHash,
-    });
+      ...(existing.passwordHash ? {} : { passwordHash: senhaHash }),
+    };
+    await existing.update(updates);
 
     return {
       skipped: false,
