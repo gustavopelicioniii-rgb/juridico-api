@@ -25,13 +25,14 @@ describe('AdminSeedService', () => {
     expect(mockedFindOne).not.toHaveBeenCalled();
   });
 
-  it('atualiza admin existente com nova senha e dados', async () => {
+  it('atualiza dados do admin existente sem substituir senha já configurada', async () => {
     const update = jest.fn(async () => undefined);
     (mockedFindOne as any).mockResolvedValue({
       id: 'adv-1',
       oab: '361329',
       nome: 'Antigo',
       email: 'old@example.com',
+      passwordHash: 'hash-existente',
       update,
     });
 
@@ -46,11 +47,36 @@ describe('AdminSeedService', () => {
       nome: 'Sidney da Silva',
       email: 'sidney@example.com',
       ativo: true,
+    }));
+    expect(update).not.toHaveBeenCalledWith(expect.objectContaining({
       passwordHash: expect.any(String),
     }));
     expect(result.skipped).toBe(false);
     expect(result.created).toBe(false);
     expect(result.advogado?.oab).toBe('361329');
+  });
+
+  it('configura senha para admin existente sem senha', async () => {
+    const update = jest.fn(async () => undefined);
+    (mockedFindOne as any).mockResolvedValue({
+      id: 'adv-1',
+      oab: '361329',
+      nome: 'Antigo',
+      email: 'old@example.com',
+      passwordHash: undefined,
+      update,
+    });
+
+    await ensureAdminSeed({
+      oab: '361329',
+      password: 'senha-forte',
+      nome: 'Sidney da Silva',
+      email: 'sidney@example.com',
+    });
+
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      passwordHash: expect.any(String),
+    }));
   });
 
   it('cria admin quando não existe', async () => {

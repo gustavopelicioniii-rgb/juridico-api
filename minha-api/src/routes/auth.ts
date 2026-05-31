@@ -2,6 +2,7 @@
  * Rotas de Autenticação
  */
 
+import { timingSafeEqual } from 'crypto';
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { generateToken, generateRefreshToken, verifyToken, blacklistToken, AuthPayload } from '../middleware/auth';
@@ -10,6 +11,16 @@ import Advogado from '../models/Advogado';
 const router = Router();
 const normalize = (value?: string | null): string | undefined => value?.trim().toUpperCase();
 const isBridgeAccount = (oab: string): boolean => normalize(oab)?.startsWith('JX') === true;
+const isValidBridgeSecret = (candidate?: string): boolean => {
+  const expected = process.env.JURIDICO_BRIDGE_SECRET;
+  if (!expected || !candidate) {
+    return false;
+  }
+
+  const expectedBuffer = Buffer.from(expected);
+  const candidateBuffer = Buffer.from(candidate);
+  return expectedBuffer.length === candidateBuffer.length && timingSafeEqual(expectedBuffer, candidateBuffer);
+};
 const isAdminAccount = (oab?: string, email?: string): boolean => {
   const adminOab = normalize(process.env.ADMIN_OAB);
   const currentOab = normalize(oab);
@@ -108,7 +119,7 @@ router.post('/login', async (req: Request, res: Response) => {
  */
 router.post('/register', async (req: Request, res: Response) => {
   try {
-    const { oab, nome, email, senha } = req.body;
+    const { oab, nome, email, senha, bridgeSecret } = req.body;
 
     if (!oab || !nome || !senha) {
       return res.status(400).json({
@@ -126,6 +137,13 @@ router.post('/register', async (req: Request, res: Response) => {
     const existing = await Advogado.findOne({ where: { oab: normalizedOab } });
     if (existing) {
       if (isBridgeAccount(normalizedOab) && !existing.passwordHash) {
+        const providedBridgeSecret = req.get('x-bridge-secret') || (typeof bridgeSecret === 'string' ? bridgeSecret : undefined);
+        if (!isValidBridgeSecret(providedBridgeSecret)) {
+          return res.status(403).json({
+            erro: { codigo: 'FORBIDDEN', mensagem: 'Bridge secret inválido.' }
+          });
+        }
+
         const bridgePasswordHash = await bcrypt.hash(senha, 12);
         await existing.update({
           passwordHash: bridgePasswordHash,
