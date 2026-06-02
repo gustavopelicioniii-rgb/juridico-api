@@ -9,7 +9,18 @@ import Advogado from '../models/Advogado';
 
 const router = Router();
 const normalize = (value?: string | null): string | undefined => value?.trim().toUpperCase();
+const normalizeEmail = (value?: string | null): string | undefined => {
+  const email = value?.trim().toLowerCase();
+  return email || undefined;
+};
 const isBridgeAccount = (oab: string): boolean => normalize(oab)?.startsWith('JX') === true;
+const canClaimPasswordlessBridgeAccount = (advogado: Advogado, submittedEmail?: string | null): boolean => {
+  const existingEmail = normalizeEmail(advogado.email);
+  return isBridgeAccount(advogado.oab)
+    && !advogado.passwordHash
+    && !!existingEmail
+    && existingEmail === normalizeEmail(submittedEmail);
+};
 const isAdminAccount = (oab?: string, email?: string): boolean => {
   const adminOab = normalize(process.env.ADMIN_OAB);
   const currentOab = normalize(oab);
@@ -125,7 +136,7 @@ router.post('/register', async (req: Request, res: Response) => {
     const normalizedOab = oab.trim().toUpperCase();
     const existing = await Advogado.findOne({ where: { oab: normalizedOab } });
     if (existing) {
-      if (isBridgeAccount(normalizedOab) && !existing.passwordHash) {
+      if (canClaimPasswordlessBridgeAccount(existing, email)) {
         const bridgePasswordHash = await bcrypt.hash(senha, 12);
         await existing.update({
           passwordHash: bridgePasswordHash,
