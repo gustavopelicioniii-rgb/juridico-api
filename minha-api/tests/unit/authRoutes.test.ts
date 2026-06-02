@@ -75,7 +75,7 @@ describe('auth routes', () => {
   });
 
   it('permite recuperar conta bridge sem senha quando o email confere', async () => {
-    const update = jest.fn(async () => undefined);
+    const update = jest.fn(async (_values: Record<string, unknown>) => undefined);
     const existing = {
       id: 'adv-bridge',
       oab: 'JX123456',
@@ -84,7 +84,7 @@ describe('auth routes', () => {
       passwordHash: undefined,
       update,
     };
-    mockedFindOne.mockResolvedValue(existing);
+    (mockedFindOne as any).mockResolvedValue(existing);
 
     const res = await callRegister({
       oab: 'jx123456',
@@ -100,7 +100,7 @@ describe('auth routes', () => {
       nome: 'Bridge Owner',
       passwordHash: expect.any(String),
     }));
-    const [{ passwordHash }] = update.mock.calls[0] as [{ passwordHash: string }];
+    const [{ passwordHash }] = update.mock.calls[0] as unknown as [{ passwordHash: string }];
     await expect(bcrypt.compare('senha-forte', passwordHash)).resolves.toBe(true);
     expect(res.body).toMatchObject({
       accessToken: 'access-token',
@@ -113,8 +113,8 @@ describe('auth routes', () => {
   });
 
   it('bloqueia tomada de conta bridge sem senha quando o email diverge', async () => {
-    const update = jest.fn(async () => undefined);
-    mockedFindOne.mockResolvedValue({
+    const update = jest.fn(async (_values: Record<string, unknown>) => undefined);
+    (mockedFindOne as any).mockResolvedValue({
       id: 'adv-bridge',
       oab: 'JX123456',
       nome: 'Bridge Owner',
@@ -138,8 +138,8 @@ describe('auth routes', () => {
   });
 
   it('bloqueia tomada de conta bridge sem senha quando não há email cadastrado', async () => {
-    const update = jest.fn(async () => undefined);
-    mockedFindOne.mockResolvedValue({
+    const update = jest.fn(async (_values: Record<string, unknown>) => undefined);
+    (mockedFindOne as any).mockResolvedValue({
       id: 'adv-bridge',
       oab: 'JX123456',
       nome: 'Bridge Owner',
