@@ -9,6 +9,7 @@ import Advogado from '../models/Advogado';
 
 const router = Router();
 const normalize = (value?: string | null): string | undefined => value?.trim().toUpperCase();
+const normalizeEmail = (value?: string | null): string | undefined => value?.trim().toLowerCase();
 const isBridgeAccount = (oab: string): boolean => normalize(oab)?.startsWith('JX') === true;
 const isAdminAccount = (oab?: string, email?: string): boolean => {
   const adminOab = normalize(process.env.ADMIN_OAB);
@@ -125,12 +126,14 @@ router.post('/register', async (req: Request, res: Response) => {
     const normalizedOab = oab.trim().toUpperCase();
     const existing = await Advogado.findOne({ where: { oab: normalizedOab } });
     if (existing) {
-      if (isBridgeAccount(normalizedOab) && !existing.passwordHash) {
+      const submittedEmail = normalizeEmail(email);
+      const existingEmail = normalizeEmail(existing.email);
+      if (isBridgeAccount(normalizedOab) && !existing.passwordHash && existingEmail && submittedEmail === existingEmail) {
         const bridgePasswordHash = await bcrypt.hash(senha, 12);
         await existing.update({
           passwordHash: bridgePasswordHash,
           nome: existing.nome || nome,
-          email: existing.email || email,
+          email: existing.email,
           ativo: true,
         });
         return res.status(200).json(buildAuthResponse(existing, 'USER'));
@@ -185,6 +188,13 @@ router.post('/refresh', async (req: Request, res: Response) => {
       const decoded = await verifyToken(refreshToken, true);
       if (decoded.jti) {
         await blacklistToken(decoded.jti, decoded.exp, true);
+      }
+
+      const advogado = decoded.advogadoId ? await Advogado.findByPk(decoded.advogadoId) : null;
+      if (!advogado || !advogado.ativo) {
+        return res.status(401).json({
+          erro: { codigo: 'INVALID_REFRESH_TOKEN', mensagem: 'Refresh token inválido ou expirado.' }
+        });
       }
 
       const payload: Omit<AuthPayload, 'iat' | 'exp'> = {
