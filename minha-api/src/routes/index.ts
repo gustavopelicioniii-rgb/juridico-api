@@ -374,7 +374,11 @@ router.put('/advogados/:id', async (req: Request, res: Response) => {
     }
     
     const { nome, email, ativo } = req.body;
-    await advogado.update({ nome, email, ativo });
+    const updateData: { nome?: string; email?: string; ativo?: boolean } = { nome, email };
+    if (isElevatedRole(req)) {
+      updateData.ativo = ativo;
+    }
+    await advogado.update(updateData);
     
     res.json({ advogado });
   } catch {

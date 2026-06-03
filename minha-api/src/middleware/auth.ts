@@ -7,6 +7,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import logger from '../config/logger';
 import { cache } from '../config/redis';
+import Advogado from '../models/Advogado';
 
 export interface AuthPayload {
   userId: string;
@@ -138,6 +139,23 @@ function getErrorName(error: unknown): string | undefined {
   return error instanceof Error ? error.name : undefined;
 }
 
+async function assertActiveAuthSubject(decoded: AuthPayload): Promise<void> {
+  if (decoded.role === 'SYSTEM') {
+    return;
+  }
+
+  if (!decoded.advogadoId) {
+    throw new Error('AUTH_SUBJECT_NOT_FOUND');
+  }
+
+  const advogado = await Advogado.findByPk(decoded.advogadoId, {
+    attributes: ['id', 'ativo'],
+  });
+  if (!advogado || !advogado.ativo) {
+    throw new Error('AUTH_SUBJECT_INACTIVE');
+  }
+}
+
 /**
  * Middleware de autenticação obrigatório
  */
@@ -175,6 +193,7 @@ export function authMiddleware(
   void (async () => {
     try {
       const decoded = await verifyToken(token, false);
+      await assertActiveAuthSubject(decoded);
       req.user = decoded;
       next();
     } catch (error) {
@@ -221,6 +240,7 @@ export function optionalAuthMiddleware(
     void (async () => {
       try {
         const decoded = await verifyToken(parts[1], false);
+        await assertActiveAuthSubject(decoded);
         req.user = decoded;
       } catch {
         // Token inválido, mas continuamos sem usuário
