@@ -29,6 +29,7 @@ import {
   isElevatedRole as isElevatedRoleByRole,
   resolveScopedAdvogadoIdForActor,
 } from '../utils/tenantScope';
+import { buildAdvogadoUpdatePayload } from '../utils/advogadoUpdate';
 
 const router = Router();
 
@@ -373,8 +374,8 @@ router.put('/advogados/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ erro: { codigo: 'ADVOGADO_NAO_ENCONTRADO', mensagem: 'Advogado nÃ£o encontrado.' } });
     }
     
-    const { nome, email, ativo } = req.body;
-    await advogado.update({ nome, email, ativo });
+    const updatePayload = buildAdvogadoUpdatePayload(req.body, isElevatedRole(req));
+    await advogado.update(updatePayload);
     
     res.json({ advogado });
   } catch {

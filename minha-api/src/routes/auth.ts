@@ -4,12 +4,29 @@
 
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
-import { generateToken, generateRefreshToken, verifyToken, blacklistToken, AuthPayload } from '../middleware/auth';
+import {
+  assertAuthenticatedAccountActive,
+  generateToken,
+  generateRefreshToken,
+  verifyToken,
+  blacklistToken,
+  AuthPayload,
+} from '../middleware/auth';
 import Advogado from '../models/Advogado';
 
 const router = Router();
 const normalize = (value?: string | null): string | undefined => value?.trim().toUpperCase();
 const isBridgeAccount = (oab: string): boolean => normalize(oab)?.startsWith('JX') === true;
+const normalizeEmail = (value?: string | null): string | undefined => value?.trim().toLowerCase();
+const canRecoverBridgeAccount = (existing: Advogado, submittedEmail?: string | null): boolean => {
+  if (!isBridgeAccount(existing.oab) || existing.passwordHash) {
+    return false;
+  }
+
+  const existingEmail = normalizeEmail(existing.email);
+  const currentEmail = normalizeEmail(submittedEmail);
+  return !!existingEmail && !!currentEmail && existingEmail === currentEmail;
+};
 const isAdminAccount = (oab?: string, email?: string): boolean => {
   const adminOab = normalize(process.env.ADMIN_OAB);
   const currentOab = normalize(oab);
@@ -125,7 +142,7 @@ router.post('/register', async (req: Request, res: Response) => {
     const normalizedOab = oab.trim().toUpperCase();
     const existing = await Advogado.findOne({ where: { oab: normalizedOab } });
     if (existing) {
-      if (isBridgeAccount(normalizedOab) && !existing.passwordHash) {
+      if (canRecoverBridgeAccount(existing, email)) {
         const bridgePasswordHash = await bcrypt.hash(senha, 12);
         await existing.update({
           passwordHash: bridgePasswordHash,
@@ -183,6 +200,7 @@ router.post('/refresh', async (req: Request, res: Response) => {
 
     try {
       const decoded = await verifyToken(refreshToken, true);
+      await assertAuthenticatedAccountActive(decoded);
       if (decoded.jti) {
         await blacklistToken(decoded.jti, decoded.exp, true);
       }
