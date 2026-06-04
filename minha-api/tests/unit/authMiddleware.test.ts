@@ -60,7 +60,7 @@ describe('authMiddleware active account enforcement', () => {
   });
 
   it('accepts an access token when the backing advogado is active', async () => {
-    mockedFindByPk.mockResolvedValue({ id: 'adv-1', ativo: true });
+    (mockedFindByPk as any).mockResolvedValue({ id: 'adv-1', ativo: true });
     const token = generateToken({ userId: 'adv-1', advogadoId: 'adv-1', role: 'USER' });
 
     const { req, res, next } = await runAuthMiddleware(token);
@@ -71,7 +71,7 @@ describe('authMiddleware active account enforcement', () => {
   });
 
   it('rejects an access token when the backing advogado has been deactivated', async () => {
-    mockedFindByPk.mockResolvedValue({ id: 'adv-1', ativo: false });
+    (mockedFindByPk as any).mockResolvedValue({ id: 'adv-1', ativo: false });
     const token = generateToken({ userId: 'adv-1', advogadoId: 'adv-1', role: 'USER' });
 
     const { res, next } = await runAuthMiddleware(token);

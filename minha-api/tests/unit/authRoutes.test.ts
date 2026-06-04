@@ -61,7 +61,7 @@ describe('auth routes security invariants', () => {
 
   it('does not let an arbitrary email claim a passwordless bridge account', async () => {
     const update = jest.fn(async () => undefined);
-    mockedFindOne.mockResolvedValue({
+    (mockedFindOne as any).mockResolvedValue({
       id: 'adv-bridge',
       oab: 'JX123',
       nome: 'Bridge Account',
@@ -84,7 +84,7 @@ describe('auth routes security invariants', () => {
 
   it('allows a passwordless bridge account to be recovered by its existing email', async () => {
     const update = jest.fn(async () => undefined);
-    mockedFindOne.mockResolvedValue({
+    (mockedFindOne as any).mockResolvedValue({
       id: 'adv-bridge',
       oab: 'JX123',
       nome: 'Bridge Account',
@@ -109,7 +109,7 @@ describe('auth routes security invariants', () => {
   });
 
   it('refuses to refresh tokens for a deactivated advogado', async () => {
-    mockedFindByPk.mockResolvedValue({ id: 'adv-1', ativo: false });
+    (mockedFindByPk as any).mockResolvedValue({ id: 'adv-1', ativo: false });
     const refreshToken = generateRefreshToken({
       userId: 'adv-1',
       advogadoId: 'adv-1',
