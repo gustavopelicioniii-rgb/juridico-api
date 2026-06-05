@@ -10,7 +10,7 @@ import Movimentacao from '../models/Movimentacao';
 import Parte from '../models/Parte';
 import Job from '../models/Job';
 import Notification from '../models/Notification';
-import TribunalService from '../services/TribunalService';
+import TribunalService, { PROCESS_OWNERSHIP_CONFLICT } from '../services/TribunalService';
 import FirecrawlEnrichmentService from '../services/FirecrawlEnrichmentService';
 import { agendarFirecrawlEnrichment, agendarOABCrawl } from '../queues/ScraperQueue';
 import { authRouter } from './auth';
@@ -374,7 +374,11 @@ router.put('/advogados/:id', async (req: Request, res: Response) => {
     }
     
     const { nome, email, ativo } = req.body;
-    await advogado.update({ nome, email, ativo });
+    const updateData: { nome?: string; email?: string; ativo?: boolean } = { nome, email };
+    if (isElevatedRole(req)) {
+      updateData.ativo = ativo;
+    }
+    await advogado.update(updateData);
     
     res.json({ advogado });
   } catch {
@@ -901,6 +905,11 @@ router.post('/tribunais/:codigo/buscar', async (req: Request, res: Response) => 
     });
   } catch (error) {
     const message = getErrorMessage(error);
+    if (message.includes(PROCESS_OWNERSHIP_CONFLICT)) {
+      return res.status(403).json({
+        erro: { codigo: PROCESS_OWNERSHIP_CONFLICT, mensagem: 'Processo já vinculado a outro advogado.' }
+      });
+    }
     if (message.includes('nÃ£o suportado') || message.includes('nÃ£o encontrado')) {
       return res.status(400).json({ erro: { codigo: 'TRIBUNAL_ERROR', mensagem: message } });
     }
@@ -968,7 +977,13 @@ router.post('/tribunais/:codigo/buscar-oab', async (req: Request, res: Response)
       acaoRequerida,
     });
   } catch (error) {
-    logger.error(`Erro ao buscar OAB: ${getErrorMessage(error)}`);
+    const message = getErrorMessage(error);
+    if (message.includes(PROCESS_OWNERSHIP_CONFLICT)) {
+      return res.status(403).json({
+        erro: { codigo: PROCESS_OWNERSHIP_CONFLICT, mensagem: 'Processo já vinculado a outro advogado.' }
+      });
+    }
+    logger.error(`Erro ao buscar OAB: ${message}`);
     res.status(500).json({ erro: { codigo: 'SCRAPE_ERROR', mensagem: 'Erro ao buscar por OAB.' } });
   }
 });
