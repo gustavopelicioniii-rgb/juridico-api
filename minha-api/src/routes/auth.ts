@@ -4,22 +4,37 @@
 
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
-import { generateToken, generateRefreshToken, verifyToken, blacklistToken, AuthPayload } from '../middleware/auth';
+import {
+  generateToken,
+  generateRefreshToken,
+  verifyToken,
+  blacklistToken,
+  ensureActiveAuthSubject,
+  AuthPayload,
+} from '../middleware/auth';
 import Advogado from '../models/Advogado';
 
 const router = Router();
 const normalize = (value?: string | null): string | undefined => value?.trim().toUpperCase();
+const normalizeEmail = (value?: string | null): string | undefined => value?.trim().toLowerCase();
 const isBridgeAccount = (oab: string): boolean => normalize(oab)?.startsWith('JX') === true;
-const isAdminAccount = (oab?: string, email?: string): boolean => {
+const isAdminAccount = (oab?: string): boolean => {
   const adminOab = normalize(process.env.ADMIN_OAB);
   const currentOab = normalize(oab);
-  if (adminOab && currentOab && adminOab === currentOab) {
-    return true;
-  }
+  return !!adminOab && !!currentOab && adminOab === currentOab;
+};
 
-  const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
-  const currentEmail = email?.trim().toLowerCase();
-  return !!adminEmail && !!currentEmail && adminEmail === currentEmail;
+const isReservedAdminCredential = (oab?: string, email?: string): boolean => {
+  const adminOab = normalize(process.env.ADMIN_OAB);
+  const adminEmail = normalizeEmail(process.env.ADMIN_EMAIL);
+  return (!!adminOab && normalize(oab) === adminOab)
+    || (!!adminEmail && normalizeEmail(email) === adminEmail);
+};
+
+const canRecoverBridgeAccount = (existing: Advogado, submittedEmail?: string): boolean => {
+  const existingEmail = normalizeEmail(existing.email);
+  const currentEmail = normalizeEmail(submittedEmail);
+  return isBridgeAccount(existing.oab) && !existing.passwordHash && !!existingEmail && existingEmail === currentEmail;
 };
 
 const buildAuthResponse = (advogado: Advogado, role: AuthPayload['role']) => {
@@ -94,7 +109,7 @@ router.post('/login', async (req: Request, res: Response) => {
       });
     }
 
-    res.json(buildAuthResponse(advogado, isAdminAccount(advogado.oab, advogado.email) ? 'ADMIN' : 'USER'));
+    res.json(buildAuthResponse(advogado, isAdminAccount(advogado.oab) ? 'ADMIN' : 'USER'));
   } catch {
     res.status(500).json({
       erro: { codigo: 'LOGIN_ERROR', mensagem: 'Erro ao realizar login.' }
@@ -123,14 +138,20 @@ router.post('/register', async (req: Request, res: Response) => {
     }
 
     const normalizedOab = oab.trim().toUpperCase();
+    if (isReservedAdminCredential(normalizedOab, email)) {
+      return res.status(409).json({
+        erro: { codigo: 'RESERVED_ADMIN_CREDENTIAL', mensagem: 'Credencial reservada para usuário administrativo.' }
+      });
+    }
+
     const existing = await Advogado.findOne({ where: { oab: normalizedOab } });
     if (existing) {
-      if (isBridgeAccount(normalizedOab) && !existing.passwordHash) {
+      if (canRecoverBridgeAccount(existing, email)) {
         const bridgePasswordHash = await bcrypt.hash(senha, 12);
         await existing.update({
           passwordHash: bridgePasswordHash,
           nome: existing.nome || nome,
-          email: existing.email || email,
+          email: existing.email,
           ativo: true,
         });
         return res.status(200).json(buildAuthResponse(existing, 'USER'));
@@ -183,6 +204,7 @@ router.post('/refresh', async (req: Request, res: Response) => {
 
     try {
       const decoded = await verifyToken(refreshToken, true);
+      await ensureActiveAuthSubject(decoded);
       if (decoded.jti) {
         await blacklistToken(decoded.jti, decoded.exp, true);
       }

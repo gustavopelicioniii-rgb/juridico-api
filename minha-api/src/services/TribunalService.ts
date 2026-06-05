@@ -110,6 +110,19 @@ export interface ResultadoBuscaProcesso {
   novasMovimentacoes: number;
 }
 
+export const PROCESS_OWNERSHIP_CONFLICT = 'PROCESS_OWNERSHIP_CONFLICT';
+
+export function assertProcessoCanBeLinkedToAdvogado(
+  processo: Pick<Processo, 'numeroProcesso' | 'advogadoId'>,
+  advogadoId?: string
+): void {
+  if (!advogadoId || !processo.advogadoId || processo.advogadoId === advogadoId) {
+    return;
+  }
+
+  throw new Error(`${PROCESS_OWNERSHIP_CONFLICT}: processo ${processo.numeroProcesso} já pertence a outro advogado`);
+}
+
 class TribunalService {
   /**
    * Busca um processo pelo número e salva/atualiza no banco
@@ -175,6 +188,7 @@ class TribunalService {
         logger.info(`Novo processo criado: ${processo.numeroProcesso}`);
       } else {
         processo = processoExistente;
+        assertProcessoCanBeLinkedToAdvogado(processo, advogadoId);
         const updateData: ProcessoUpdateData = {
           classe: dadosProcesso.classe || processo.classe,
           assunto: dadosProcesso.assunto || processo.assunto,
@@ -303,6 +317,7 @@ class TribunalService {
     });
 
     if (existente) {
+      assertProcessoCanBeLinkedToAdvogado(existente, advogadoId);
       const updateData: Partial<typeof dadosResumo> = {
         tribunalId: dadosResumo.tribunalId,
       };
