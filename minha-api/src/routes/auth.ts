@@ -9,11 +9,25 @@ import Advogado from '../models/Advogado';
 
 const router = Router();
 const normalize = (value?: string | null): string | undefined => value?.trim().toUpperCase();
-const isBridgeAccount = (oab: string): boolean => normalize(oab)?.startsWith('JX') === true;
 const isAdminAccount = (oab?: string, email?: string): boolean => {
   const adminOab = normalize(process.env.ADMIN_OAB);
   const currentOab = normalize(oab);
-  if (adminOab && currentOab && adminOab === currentOab) {
+  if (!adminOab || !currentOab || adminOab !== currentOab) {
+    return false;
+  }
+
+  const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+  if (!adminEmail) {
+    return true;
+  }
+
+  const currentEmail = email?.trim().toLowerCase();
+  return !!currentEmail && adminEmail === currentEmail;
+};
+
+const isReservedAdminCredential = (oab: string, email?: string): boolean => {
+  const adminOab = normalize(process.env.ADMIN_OAB);
+  if (adminOab && normalize(oab) === adminOab) {
     return true;
   }
 
@@ -123,18 +137,14 @@ router.post('/register', async (req: Request, res: Response) => {
     }
 
     const normalizedOab = oab.trim().toUpperCase();
+    if (isReservedAdminCredential(normalizedOab, email)) {
+      return res.status(403).json({
+        erro: { codigo: 'RESERVED_ADMIN_CREDENTIAL', mensagem: 'Credenciais reservadas para provisionamento administrativo.' }
+      });
+    }
+
     const existing = await Advogado.findOne({ where: { oab: normalizedOab } });
     if (existing) {
-      if (isBridgeAccount(normalizedOab) && !existing.passwordHash) {
-        const bridgePasswordHash = await bcrypt.hash(senha, 12);
-        await existing.update({
-          passwordHash: bridgePasswordHash,
-          nome: existing.nome || nome,
-          email: existing.email || email,
-          ativo: true,
-        });
-        return res.status(200).json(buildAuthResponse(existing, 'USER'));
-      }
       return res.status(409).json({
         erro: { codigo: 'DUPLICATE_OAB', mensagem: 'Já existe advogado com esta OAB.' }
       });
