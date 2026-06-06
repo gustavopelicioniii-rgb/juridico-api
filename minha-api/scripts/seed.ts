@@ -32,7 +32,7 @@ const seedSampleAdvogado = async (): Promise<void> => {
   }
 
   const advogado = result.advogado!;
-  console.log(`${result.created ? '✅ Created' : '📝 Updated'}: Advogado ${advogado.nome} (${advogado.oab})`);
+  console.log(`${result.created ? '✅ Created' : '📝 Found'}: Advogado ${advogado.nome} (${advogado.oab})`);
 };
 
 const main = async (): Promise<void> => {
