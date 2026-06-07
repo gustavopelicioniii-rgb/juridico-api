@@ -105,11 +105,11 @@ describe('TribunalService ownership invariant', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockedRegistryGet.mockReturnValue({ buscarProcesso: mockBuscarProcesso });
-    mockedTransaction.mockImplementation(async (callback: (transaction: unknown) => Promise<unknown>) =>
+    (mockedTransaction as any).mockImplementation(async (callback: (transaction: unknown) => Promise<unknown>) =>
       callback({ id: 'tx' })
     );
-    mockedTribunalFindOne.mockResolvedValue({ id: 'trib-1', codigo: 'TJSP' });
-    mockBuscarProcesso.mockResolvedValue({
+    (mockedTribunalFindOne as any).mockResolvedValue({ id: 'trib-1', codigo: 'TJSP' });
+    (mockBuscarProcesso as any).mockResolvedValue({
       numeroProcesso: '0000001-00.2024.8.26.0001',
       classe: 'Procedimento',
       assunto: 'Teste',
@@ -122,7 +122,7 @@ describe('TribunalService ownership invariant', () => {
 
   it('não reassocia processo já pertencente a outro advogado', async () => {
     const update = jest.fn(async () => undefined);
-    mockedProcessoFindOne.mockResolvedValue({
+    (mockedProcessoFindOne as any).mockResolvedValue({
       id: 'proc-1',
       numeroProcesso: '0000001-00.2024.8.26.0001',
       advogadoId: 'adv-victim',
