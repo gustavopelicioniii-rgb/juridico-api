@@ -7,6 +7,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import logger from '../config/logger';
 import { cache } from '../config/redis';
+import Advogado from '../models/Advogado';
 
 export interface AuthPayload {
   userId: string;
@@ -130,6 +131,20 @@ export async function verifyToken(token: string, isRefresh = false): Promise<Aut
   return decoded;
 }
 
+export async function requireActiveAdvogadoForPayload(payload: AuthPayload): Promise<Advogado> {
+  const advogadoId = payload.advogadoId || payload.userId;
+  if (!advogadoId) {
+    throw new Error('AUTH_SUBJECT_MISSING');
+  }
+
+  const advogado = await Advogado.findByPk(advogadoId);
+  if (!advogado || !advogado.ativo) {
+    throw new Error('AUTH_SUBJECT_INACTIVE');
+  }
+
+  return advogado;
+}
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -175,6 +190,11 @@ export function authMiddleware(
   void (async () => {
     try {
       const decoded = await verifyToken(token, false);
+      if (decoded.role !== 'SYSTEM') {
+        const advogado = await requireActiveAdvogadoForPayload(decoded);
+        decoded.userId = advogado.id;
+        decoded.advogadoId = advogado.id;
+      }
       req.user = decoded;
       next();
     } catch (error) {
@@ -221,6 +241,11 @@ export function optionalAuthMiddleware(
     void (async () => {
       try {
         const decoded = await verifyToken(parts[1], false);
+        if (decoded.role !== 'SYSTEM') {
+          const advogado = await requireActiveAdvogadoForPayload(decoded);
+          decoded.userId = advogado.id;
+          decoded.advogadoId = advogado.id;
+        }
         req.user = decoded;
       } catch {
         // Token inválido, mas continuamos sem usuário

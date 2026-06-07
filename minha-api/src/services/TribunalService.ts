@@ -23,6 +23,10 @@ import {
   type OABProcessoResumo,
   type ProcessoApiResponse,
 } from '../utils/serializeProcessoApi';
+import {
+  assertProcessOwnershipCanBeAssigned,
+  isProcessOwnershipError,
+} from '../utils/processOwnership';
 
 const CACHE_TTL_MINUTES = 30;
 const MAX_PARALLEL_FETCHES = 5; // Paralelo para produção
@@ -175,6 +179,11 @@ class TribunalService {
         logger.info(`Novo processo criado: ${processo.numeroProcesso}`);
       } else {
         processo = processoExistente;
+        assertProcessOwnershipCanBeAssigned(
+          processo.advogadoId,
+          advogadoId,
+          processo.numeroProcesso
+        );
         const updateData: ProcessoUpdateData = {
           classe: dadosProcesso.classe || processo.classe,
           assunto: dadosProcesso.assunto || processo.assunto,
@@ -303,6 +312,11 @@ class TribunalService {
     });
 
     if (existente) {
+      assertProcessOwnershipCanBeAssigned(
+        existente.advogadoId,
+        advogadoId,
+        existente.numeroProcesso
+      );
       const updateData: Partial<typeof dadosResumo> = {
         tribunalId: dadosResumo.tribunalId,
       };
@@ -310,6 +324,9 @@ class TribunalService {
 
       if (existente.enriquecido !== true) {
         Object.assign(updateData, dadosResumo);
+        if (!advogadoId) {
+          delete updateData.advogadoId;
+        }
       }
 
       await existente.update(updateData);
@@ -647,6 +664,10 @@ class TribunalService {
             ENRICHMENT_TIMEOUT_MS,
             `Enriquecimento ${proc.numeroProcesso}`
           ).catch(async error => {
+            if (isProcessOwnershipError(error)) {
+              logger.warn(`Processo ${proc.numeroProcesso} pertence a outro advogado; ignorando reassociação.`);
+              return null;
+            }
             logger.warn(`Falha ao processar processo ${proc.numeroProcesso}: ${error}`);
             try {
               return await this.salvarResumoProcessoOAB(proc, tribunalCodigo, advogadoId);
