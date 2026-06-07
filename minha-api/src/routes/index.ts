@@ -29,6 +29,7 @@ import {
   isElevatedRole as isElevatedRoleByRole,
   resolveScopedAdvogadoIdForActor,
 } from '../utils/tenantScope';
+import { isProcessOwnershipError } from '../utils/processOwnership';
 
 const router = Router();
 
@@ -374,7 +375,12 @@ router.put('/advogados/:id', async (req: Request, res: Response) => {
     }
     
     const { nome, email, ativo } = req.body;
-    await advogado.update({ nome, email, ativo });
+    const updateData: { nome?: string; email?: string; ativo?: boolean } = { nome, email };
+    if (isElevatedRole(req)) {
+      updateData.ativo = ativo;
+    }
+
+    await advogado.update(updateData);
     
     res.json({ advogado });
   } catch {
@@ -900,6 +906,11 @@ router.post('/tribunais/:codigo/buscar', async (req: Request, res: Response) => 
       novasMovimentacoes: resultado.novasMovimentacoes,
     });
   } catch (error) {
+    if (isProcessOwnershipError(error)) {
+      return res.status(403).json({
+        erro: { codigo: 'PROCESS_OWNERSHIP_CONFLICT', mensagem: 'Processo já pertence a outro advogado.' },
+      });
+    }
     const message = getErrorMessage(error);
     if (message.includes('nÃ£o suportado') || message.includes('nÃ£o encontrado')) {
       return res.status(400).json({ erro: { codigo: 'TRIBUNAL_ERROR', mensagem: message } });

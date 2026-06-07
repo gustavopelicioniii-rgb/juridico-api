@@ -4,22 +4,30 @@
 
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
-import { generateToken, generateRefreshToken, verifyToken, blacklistToken, AuthPayload } from '../middleware/auth';
+import {
+  generateToken,
+  generateRefreshToken,
+  verifyToken,
+  blacklistToken,
+  requireActiveAdvogadoForPayload,
+  AuthPayload,
+} from '../middleware/auth';
 import Advogado from '../models/Advogado';
 
 const router = Router();
 const normalize = (value?: string | null): string | undefined => value?.trim().toUpperCase();
-const isBridgeAccount = (oab: string): boolean => normalize(oab)?.startsWith('JX') === true;
-const isAdminAccount = (oab?: string, email?: string): boolean => {
+const normalizeEmail = (value?: string | null): string | undefined => value?.trim().toLowerCase();
+export const isAdminAccount = (oab?: string): boolean => {
   const adminOab = normalize(process.env.ADMIN_OAB);
   const currentOab = normalize(oab);
-  if (adminOab && currentOab && adminOab === currentOab) {
-    return true;
-  }
+  return !!adminOab && !!currentOab && adminOab === currentOab;
+};
 
-  const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
-  const currentEmail = email?.trim().toLowerCase();
-  return !!adminEmail && !!currentEmail && adminEmail === currentEmail;
+export const hasReservedAdminCredential = (oab?: string | null, email?: string | null): boolean => {
+  const adminOab = normalize(process.env.ADMIN_OAB);
+  const adminEmail = normalizeEmail(process.env.ADMIN_EMAIL);
+  return (!!adminOab && normalize(oab) === adminOab)
+    || (!!adminEmail && normalizeEmail(email) === adminEmail);
 };
 
 const buildAuthResponse = (advogado: Advogado, role: AuthPayload['role']) => {
@@ -94,7 +102,7 @@ router.post('/login', async (req: Request, res: Response) => {
       });
     }
 
-    res.json(buildAuthResponse(advogado, isAdminAccount(advogado.oab, advogado.email) ? 'ADMIN' : 'USER'));
+    res.json(buildAuthResponse(advogado, isAdminAccount(advogado.oab) ? 'ADMIN' : 'USER'));
   } catch {
     res.status(500).json({
       erro: { codigo: 'LOGIN_ERROR', mensagem: 'Erro ao realizar login.' }
@@ -123,18 +131,14 @@ router.post('/register', async (req: Request, res: Response) => {
     }
 
     const normalizedOab = oab.trim().toUpperCase();
+    if (hasReservedAdminCredential(normalizedOab, email)) {
+      return res.status(403).json({
+        erro: { codigo: 'RESERVED_ADMIN_CREDENTIAL', mensagem: 'Credenciais reservadas para a conta administradora.' }
+      });
+    }
+
     const existing = await Advogado.findOne({ where: { oab: normalizedOab } });
     if (existing) {
-      if (isBridgeAccount(normalizedOab) && !existing.passwordHash) {
-        const bridgePasswordHash = await bcrypt.hash(senha, 12);
-        await existing.update({
-          passwordHash: bridgePasswordHash,
-          nome: existing.nome || nome,
-          email: existing.email || email,
-          ativo: true,
-        });
-        return res.status(200).json(buildAuthResponse(existing, 'USER'));
-      }
       return res.status(409).json({
         erro: { codigo: 'DUPLICATE_OAB', mensagem: 'Já existe advogado com esta OAB.' }
       });
@@ -187,11 +191,21 @@ router.post('/refresh', async (req: Request, res: Response) => {
         await blacklistToken(decoded.jti, decoded.exp, true);
       }
 
-      const payload: Omit<AuthPayload, 'iat' | 'exp'> = {
-        userId: decoded.userId,
-        advogadoId: decoded.advogadoId,
-        role: decoded.role,
-      };
+      let payload: Omit<AuthPayload, 'iat' | 'exp'>;
+      if (decoded.role === 'SYSTEM') {
+        payload = {
+          userId: decoded.userId,
+          advogadoId: decoded.advogadoId,
+          role: decoded.role,
+        };
+      } else {
+        const advogado = await requireActiveAdvogadoForPayload(decoded);
+        payload = {
+          userId: advogado.id,
+          advogadoId: advogado.id,
+          role: isAdminAccount(advogado.oab) ? 'ADMIN' : 'USER',
+        };
+      }
 
       const accessToken = generateToken(payload);
       const newRefreshToken = generateRefreshToken(payload);
@@ -264,9 +278,16 @@ router.get('/me', async (req: Request, res: Response) => {
     const token = authHeader.split(' ')[1];
     const decoded = await verifyToken(token, false);
 
-    const advogado = await Advogado.findByPk(decoded.advogadoId);
+    if (decoded.role === 'SYSTEM') {
+      return res.json({
+        id: decoded.userId,
+        role: decoded.role,
+      });
+    }
 
-    if (!advogado || !advogado.ativo) {
+    const advogado = await requireActiveAdvogadoForPayload(decoded);
+
+    if (!advogado) {
       return res.status(404).json({
         erro: { codigo: 'USER_NOT_FOUND', mensagem: 'Usuário não encontrado.' }
       });
@@ -277,7 +298,7 @@ router.get('/me', async (req: Request, res: Response) => {
       oab: advogado.oab,
       nome: advogado.nome,
       email: advogado.email,
-      role: decoded.role,
+      role: isAdminAccount(advogado.oab) ? 'ADMIN' : 'USER',
     });
   } catch {
     res.status(500).json({
