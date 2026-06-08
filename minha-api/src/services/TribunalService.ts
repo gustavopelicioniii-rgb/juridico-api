@@ -327,7 +327,8 @@ class TribunalService {
       if (advogadoId && !existente.advogadoId) updateData.advogadoId = advogadoId;
 
       if (existente.enriquecido !== true) {
-        const { advogadoId: _advogadoId, ...dadosResumoSemAdvogado } = dadosResumo;
+        const dadosResumoSemAdvogado: Partial<typeof dadosResumo> = { ...dadosResumo };
+        delete dadosResumoSemAdvogado.advogadoId;
         Object.assign(updateData, dadosResumoSemAdvogado);
       }
 
