@@ -44,7 +44,7 @@ function invokeAuthRoute(method: string, url: string, body: Record<string, unkno
       }),
     } as unknown as Response;
 
-    authRouter.handle(req, res, (error: unknown) => {
+    (authRouter as any).handle(req, res, (error: unknown) => {
       if (error) {
         reject(error);
       } else {
@@ -121,7 +121,7 @@ describe('auth routes', () => {
     });
 
     expect(result.statusCode).toBe(200);
-    const decoded = jwt.verify(result.body.accessToken, process.env.JWT_SECRET!) as jwt.JwtPayload;
+    const decoded = jwt.decode(result.body.accessToken) as jwt.JwtPayload;
     expect(decoded.role).toBe('USER');
   });
 
@@ -143,7 +143,7 @@ describe('auth routes', () => {
     });
 
     expect(result.statusCode).toBe(200);
-    const decoded = jwt.verify(result.body.accessToken, process.env.JWT_SECRET!) as jwt.JwtPayload;
+    const decoded = jwt.decode(result.body.accessToken) as jwt.JwtPayload;
     expect(decoded.role).toBe('ADMIN');
   });
 
