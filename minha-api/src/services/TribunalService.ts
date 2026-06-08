@@ -23,6 +23,10 @@ import {
   type OABProcessoResumo,
   type ProcessoApiResponse,
 } from '../utils/serializeProcessoApi';
+import {
+  assertProcessOwnership,
+  hasProcessOwnershipConflict,
+} from '../utils/processOwnership';
 
 const CACHE_TTL_MINUTES = 30;
 const MAX_PARALLEL_FETCHES = 5; // Paralelo para produção
@@ -175,6 +179,11 @@ class TribunalService {
         logger.info(`Novo processo criado: ${processo.numeroProcesso}`);
       } else {
         processo = processoExistente;
+        assertProcessOwnership(
+          dadosProcesso.numeroProcesso,
+          processo.advogadoId,
+          advogadoId
+        );
         const updateData: ProcessoUpdateData = {
           classe: dadosProcesso.classe || processo.classe,
           assunto: dadosProcesso.assunto || processo.assunto,
@@ -187,7 +196,7 @@ class TribunalService {
           dadosOriginais: dadosProcesso.dadosOriginais,
           enriquecido: true, // Marcado como enriquecido quando dados sao atualizados
         };
-        if (advogadoId) {
+        if (advogadoId && !processo.advogadoId) {
           updateData.advogadoId = advogadoId;
         }
         await processo.update(
@@ -303,13 +312,24 @@ class TribunalService {
     });
 
     if (existente) {
+      if (hasProcessOwnershipConflict(existente.advogadoId, advogadoId)) {
+        logger.warn('Resumo OAB ignorado para processo vinculado a outro advogado', {
+          numeroProcesso: proc.numeroProcesso,
+          existingAdvogadoId: existente.advogadoId,
+          requestedAdvogadoId: advogadoId,
+        });
+        return existente.numeroProcesso;
+      }
+
       const updateData: Partial<typeof dadosResumo> = {
         tribunalId: dadosResumo.tribunalId,
       };
-      if (advogadoId) updateData.advogadoId = advogadoId;
+      if (advogadoId && !existente.advogadoId) updateData.advogadoId = advogadoId;
 
       if (existente.enriquecido !== true) {
-        Object.assign(updateData, dadosResumo);
+        const dadosResumoSemAdvogado: Partial<typeof dadosResumo> = { ...dadosResumo };
+        delete dadosResumoSemAdvogado.advogadoId;
+        Object.assign(updateData, dadosResumoSemAdvogado);
       }
 
       await existente.update(updateData);
@@ -500,14 +520,18 @@ class TribunalService {
     const oabNormalizada = oab.toUpperCase().replace(/\s/g, '');
     const oabCacheKeys = buildOABCacheKeys(oabNormalizada);
     const buscaLimitada = typeof limiteProcessos === 'number' && limiteProcessos > 0;
-    const carregarProcessos = (numeros: string[]) =>
-      Processo.findAll({
-        where: { numeroProcesso: numeros },
+    const carregarProcessos = (numeros: string[]) => {
+      const where: { numeroProcesso: string[]; advogadoId?: string } = { numeroProcesso: numeros };
+      if (advogadoId) where.advogadoId = advogadoId;
+
+      return Processo.findAll({
+        where,
         include: [
           { model: Parte, as: 'partes' },
           { model: Movimentacao, as: 'movimentacoes' },
         ],
       });
+    };
 
     if (forceRefresh || onlyMissing) {
       for (const cacheKey of oabCacheKeys) {
