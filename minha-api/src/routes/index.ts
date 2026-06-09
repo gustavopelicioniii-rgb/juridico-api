@@ -29,6 +29,8 @@ import {
   isElevatedRole as isElevatedRoleByRole,
   resolveScopedAdvogadoIdForActor,
 } from '../utils/tenantScope';
+import { PROCESS_OWNERSHIP_CONFLICT_CODE } from '../utils/processOwnership';
+import { buildAdvogadoUpdatePayload } from '../utils/advogadoUpdate';
 
 const router = Router();
 
@@ -373,8 +375,7 @@ router.put('/advogados/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ erro: { codigo: 'ADVOGADO_NAO_ENCONTRADO', mensagem: 'Advogado nÃ£o encontrado.' } });
     }
     
-    const { nome, email, ativo } = req.body;
-    await advogado.update({ nome, email, ativo });
+    await advogado.update(buildAdvogadoUpdatePayload(req.body, isElevatedRole(req)));
     
     res.json({ advogado });
   } catch {
@@ -901,6 +902,11 @@ router.post('/tribunais/:codigo/buscar', async (req: Request, res: Response) => 
     });
   } catch (error) {
     const message = getErrorMessage(error);
+    if ((error as { code?: string })?.code === PROCESS_OWNERSHIP_CONFLICT_CODE) {
+      return res.status(403).json({
+        erro: { codigo: 'PROCESS_OWNERSHIP_CONFLICT', mensagem: message },
+      });
+    }
     if (message.includes('nÃ£o suportado') || message.includes('nÃ£o encontrado')) {
       return res.status(400).json({ erro: { codigo: 'TRIBUNAL_ERROR', mensagem: message } });
     }
