@@ -7,6 +7,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import logger from '../config/logger';
 import { cache } from '../config/redis';
+import Advogado from '../models/Advogado';
 
 export interface AuthPayload {
   userId: string;
@@ -130,6 +131,22 @@ export async function verifyToken(token: string, isRefresh = false): Promise<Aut
   return decoded;
 }
 
+export async function ensureActiveAdvogadoForPayload(decoded: AuthPayload): Promise<void> {
+  if (decoded.role === 'SYSTEM') {
+    return;
+  }
+
+  const advogadoId = decoded.advogadoId || decoded.userId;
+  if (!advogadoId) {
+    throw new Error('USER_SCOPE_REQUIRED');
+  }
+
+  const advogado = await Advogado.findByPk(advogadoId);
+  if (!advogado || !advogado.ativo) {
+    throw new Error('ACCOUNT_INACTIVE');
+  }
+}
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -175,6 +192,7 @@ export function authMiddleware(
   void (async () => {
     try {
       const decoded = await verifyToken(token, false);
+      await ensureActiveAdvogadoForPayload(decoded);
       req.user = decoded;
       next();
     } catch (error) {
@@ -185,6 +203,16 @@ export function authMiddleware(
           erro: {
             codigo: 'TOKEN_EXPIRED',
             mensagem: 'Token de autenticação expirado.',
+          },
+        });
+        return;
+      }
+
+      if (getErrorMessage(error) === 'ACCOUNT_INACTIVE' || getErrorMessage(error) === 'USER_SCOPE_REQUIRED') {
+        res.status(401).json({
+          erro: {
+            codigo: 'ACCOUNT_INACTIVE',
+            mensagem: 'Conta inativa ou não encontrada.',
           },
         });
         return;
@@ -221,6 +249,7 @@ export function optionalAuthMiddleware(
     void (async () => {
       try {
         const decoded = await verifyToken(parts[1], false);
+        await ensureActiveAdvogadoForPayload(decoded);
         req.user = decoded;
       } catch {
         // Token inválido, mas continuamos sem usuário
