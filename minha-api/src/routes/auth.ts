@@ -9,17 +9,23 @@ import Advogado from '../models/Advogado';
 
 const router = Router();
 const normalize = (value?: string | null): string | undefined => value?.trim().toUpperCase();
-const isBridgeAccount = (oab: string): boolean => normalize(oab)?.startsWith('JX') === true;
-const isAdminAccount = (oab?: string, email?: string): boolean => {
+export const isAdminAccount = (oab?: string): boolean => {
   const adminOab = normalize(process.env.ADMIN_OAB);
   const currentOab = normalize(oab);
-  if (adminOab && currentOab && adminOab === currentOab) {
-    return true;
-  }
+  return !!adminOab && !!currentOab && adminOab === currentOab;
+};
 
+export const isReservedAdminCredential = (oab?: string, email?: string): boolean => {
+  const adminOab = normalize(process.env.ADMIN_OAB);
+  const currentOab = normalize(oab);
   const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
   const currentEmail = email?.trim().toLowerCase();
-  return !!adminEmail && !!currentEmail && adminEmail === currentEmail;
+  return (!!adminOab && !!currentOab && adminOab === currentOab) ||
+    (!!adminEmail && !!currentEmail && adminEmail === currentEmail);
+};
+
+const resolveAuthRole = (advogado: Advogado): AuthPayload['role'] => {
+  return isAdminAccount(advogado.oab) ? 'ADMIN' : 'USER';
 };
 
 const buildAuthResponse = (advogado: Advogado, role: AuthPayload['role']) => {
@@ -94,7 +100,7 @@ router.post('/login', async (req: Request, res: Response) => {
       });
     }
 
-    res.json(buildAuthResponse(advogado, isAdminAccount(advogado.oab, advogado.email) ? 'ADMIN' : 'USER'));
+    res.json(buildAuthResponse(advogado, resolveAuthRole(advogado)));
   } catch {
     res.status(500).json({
       erro: { codigo: 'LOGIN_ERROR', mensagem: 'Erro ao realizar login.' }
@@ -123,18 +129,14 @@ router.post('/register', async (req: Request, res: Response) => {
     }
 
     const normalizedOab = oab.trim().toUpperCase();
+    if (isReservedAdminCredential(normalizedOab, email)) {
+      return res.status(403).json({
+        erro: { codigo: 'RESERVED_ADMIN_CREDENTIAL', mensagem: 'Credenciais reservadas para administrador.' }
+      });
+    }
+
     const existing = await Advogado.findOne({ where: { oab: normalizedOab } });
     if (existing) {
-      if (isBridgeAccount(normalizedOab) && !existing.passwordHash) {
-        const bridgePasswordHash = await bcrypt.hash(senha, 12);
-        await existing.update({
-          passwordHash: bridgePasswordHash,
-          nome: existing.nome || nome,
-          email: existing.email || email,
-          ativo: true,
-        });
-        return res.status(200).json(buildAuthResponse(existing, 'USER'));
-      }
       return res.status(409).json({
         erro: { codigo: 'DUPLICATE_OAB', mensagem: 'Já existe advogado com esta OAB.' }
       });
@@ -187,10 +189,19 @@ router.post('/refresh', async (req: Request, res: Response) => {
         await blacklistToken(decoded.jti, decoded.exp, true);
       }
 
+      const advogado = decoded.advogadoId
+        ? await Advogado.findByPk(decoded.advogadoId)
+        : null;
+      if (!advogado || !advogado.ativo) {
+        return res.status(401).json({
+          erro: { codigo: 'INVALID_REFRESH_TOKEN', mensagem: 'Refresh token inválido ou expirado.' }
+        });
+      }
+
       const payload: Omit<AuthPayload, 'iat' | 'exp'> = {
-        userId: decoded.userId,
-        advogadoId: decoded.advogadoId,
-        role: decoded.role,
+        userId: advogado.id,
+        advogadoId: advogado.id,
+        role: resolveAuthRole(advogado),
       };
 
       const accessToken = generateToken(payload);
@@ -277,7 +288,7 @@ router.get('/me', async (req: Request, res: Response) => {
       oab: advogado.oab,
       nome: advogado.nome,
       email: advogado.email,
-      role: decoded.role,
+      role: resolveAuthRole(advogado),
     });
   } catch {
     res.status(500).json({

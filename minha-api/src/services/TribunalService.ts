@@ -57,6 +57,13 @@ type ProcessoUpdateData = Partial<Omit<ProcessoPersistData, 'numeroProcesso' | '
   enriquecido: boolean;
 };
 
+export class ProcessOwnershipConflictError extends Error {
+  constructor(numeroProcesso: string) {
+    super(`Processo ${numeroProcesso} já está vinculado a outro advogado.`);
+    this.name = 'ProcessOwnershipConflictError';
+  }
+}
+
 /**
  * Executa função com timeout
  */
@@ -175,6 +182,10 @@ class TribunalService {
         logger.info(`Novo processo criado: ${processo.numeroProcesso}`);
       } else {
         processo = processoExistente;
+        if (this.hasOwnershipConflict(processo, advogadoId)) {
+          throw new ProcessOwnershipConflictError(processo.numeroProcesso);
+        }
+
         const updateData: ProcessoUpdateData = {
           classe: dadosProcesso.classe || processo.classe,
           assunto: dadosProcesso.assunto || processo.assunto,
@@ -227,7 +238,7 @@ class TribunalService {
     t: Transaction
   ): Promise<void> {
     const existente = await Monitoramento.findOne({
-      where: { processoId, ativo: true },
+      where: { processoId, advogadoId, ativo: true },
       transaction: t,
     });
 
@@ -251,7 +262,7 @@ class TribunalService {
     if (!advogadoId) return;
 
     const existente = await Monitoramento.findOne({
-      where: { processoId, ativo: true },
+      where: { processoId, advogadoId, ativo: true },
     });
 
     if (existente) return;
@@ -303,6 +314,13 @@ class TribunalService {
     });
 
     if (existente) {
+      if (this.hasOwnershipConflict(existente, advogadoId)) {
+        logger.warn(
+          `Resumo OAB ignorou atualização de propriedade para processo ${existente.numeroProcesso}: proprietário divergente`
+        );
+        return existente.numeroProcesso;
+      }
+
       const updateData: Partial<typeof dadosResumo> = {
         tribunalId: dadosResumo.tribunalId,
       };
@@ -500,14 +518,17 @@ class TribunalService {
     const oabNormalizada = oab.toUpperCase().replace(/\s/g, '');
     const oabCacheKeys = buildOABCacheKeys(oabNormalizada);
     const buscaLimitada = typeof limiteProcessos === 'number' && limiteProcessos > 0;
-    const carregarProcessos = (numeros: string[]) =>
-      Processo.findAll({
-        where: { numeroProcesso: numeros },
+    const carregarProcessos = (numeros: string[]) => {
+      const where: { numeroProcesso: string[]; advogadoId?: string } = { numeroProcesso: numeros };
+      if (advogadoId) where.advogadoId = advogadoId;
+      return Processo.findAll({
+        where,
         include: [
           { model: Parte, as: 'partes' },
           { model: Movimentacao, as: 'movimentacoes' },
         ],
       });
+    };
 
     if (forceRefresh || onlyMissing) {
       for (const cacheKey of oabCacheKeys) {
@@ -768,6 +789,10 @@ class TribunalService {
     );
     
     return updated;
+  }
+
+  private hasOwnershipConflict(processo: Processo, advogadoId?: string): boolean {
+    return !!advogadoId && !!processo.advogadoId && processo.advogadoId !== advogadoId;
   }
 }
 

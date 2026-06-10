@@ -27,31 +27,24 @@ export async function ensureAdminSeed(params: EnsureAdminSeedParams): Promise<En
     return { skipped: true };
   }
 
-  const senhaHash = await bcrypt.hash(password, 12);
   const nome = params.nome?.trim() || 'Administrador';
   const email = params.email?.trim() || undefined;
 
   const existing = await Advogado.findOne({ where: { oab } });
   if (existing) {
-    await existing.update({
-      nome,
-      email,
-      ativo: true,
-      passwordHash: senhaHash,
-    });
-
     return {
       skipped: false,
       created: false,
       advogado: {
         id: existing.id,
         oab: existing.oab,
-        nome: nome,
-        email,
+        nome: existing.nome,
+        email: existing.email,
       },
     };
   }
 
+  const senhaHash = await bcrypt.hash(password, 12);
   const advogado = await Advogado.create({
     oab,
     nome,
