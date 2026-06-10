@@ -4,6 +4,7 @@
  */
 
 import Bull, { Queue, Job } from 'bull';
+import { randomUUID } from 'crypto';
 import { registry } from '../tribunais';
 import TribunalService from '../services/TribunalService';
 import FirecrawlEnrichmentService from '../services/FirecrawlEnrichmentService';
@@ -370,6 +371,7 @@ export async function agendarInitialOABCrawl(
     }
   }
 
+  const attemptId = data.correlationId || `${Date.now()}-${randomUUID()}`;
   const job = await scrapeQueue.add({
     ...data,
     tipo: 'INITIAL_OAB_CRAWL',
@@ -379,7 +381,7 @@ export async function agendarInitialOABCrawl(
     tribunais: tribunaisAlvo,
   }, {
     priority: data.prioridade || 1,
-    jobId: `initial-oab-${data.advogadoId}-${oabNormalizada}`,
+    jobId: `initial-oab-${data.advogadoId}-${oabNormalizada}-${attemptId}`,
     removeOnComplete: false,
     removeOnFail: false,
     attempts: 3,

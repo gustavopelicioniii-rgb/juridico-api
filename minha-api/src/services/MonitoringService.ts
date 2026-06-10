@@ -154,9 +154,6 @@ class MonitoringService {
         };
       }
       
-      // Marca o monitoramento como agendado para evitar jobs duplicados entre polls.
-      await monitoramento.update({ ultimoPoll: agora });
-
       // Agenda scraping na fila (não executa diretamente para não bloquear)
       const tribunal = await Tribunal.findByPk(processo.tribunalId);
       await agendarScraping({
@@ -167,6 +164,9 @@ class MonitoringService {
         monitoramentoId: monitoramento.id,
         prioridade: 1, // Baixa prioridade para polling
       });
+
+      // Só avança a janela após o job entrar na fila; falhas de enqueue não podem perder o próximo poll.
+      await monitoramento.update({ ultimoPoll: agora });
 
       const novasMovimentacoes = await Movimentacao.count({
         where: {
