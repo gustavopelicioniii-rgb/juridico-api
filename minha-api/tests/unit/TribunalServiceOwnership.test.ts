@@ -53,6 +53,13 @@ jest.mock('../../src/models/Movimentacao', () => ({
   },
 }));
 
+jest.mock('../../src/models/Job', () => ({
+  __esModule: true,
+  default: {
+    create: jest.fn(),
+  },
+}));
+
 jest.mock('../../src/models/Monitoramento', () => ({
   __esModule: true,
   default: {
