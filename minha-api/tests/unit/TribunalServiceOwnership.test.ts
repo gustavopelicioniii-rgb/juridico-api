@@ -184,9 +184,9 @@ describe('TribunalService ownership isolation', () => {
     expect(resultado.processos).toHaveLength(1);
     expect(resultado.processos[0]).toEqual(expect.objectContaining({
       numeroProcesso: dadosProcesso.numeroProcesso,
-      id: undefined,
       enriquecido: false,
     }));
+    expect(resultado.processos[0].id).toBeUndefined();
     expect(resultado.processos[0].partes?.[0]?.nome).toBe('Parte sensível');
   });
 });
