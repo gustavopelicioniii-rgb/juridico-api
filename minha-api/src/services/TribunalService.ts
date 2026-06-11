@@ -23,6 +23,7 @@ import {
   type OABProcessoResumo,
   type ProcessoApiResponse,
 } from '../utils/serializeProcessoApi';
+import { assertProcessCanBeAssociated } from '../utils/processOwnership';
 
 const CACHE_TTL_MINUTES = 30;
 const MAX_PARALLEL_FETCHES = 5; // Paralelo para produção
@@ -175,6 +176,7 @@ class TribunalService {
         logger.info(`Novo processo criado: ${processo.numeroProcesso}`);
       } else {
         processo = processoExistente;
+        assertProcessCanBeAssociated(processo, advogadoId);
         const updateData: ProcessoUpdateData = {
           classe: dadosProcesso.classe || processo.classe,
           assunto: dadosProcesso.assunto || processo.assunto,
@@ -303,6 +305,7 @@ class TribunalService {
     });
 
     if (existente) {
+      assertProcessCanBeAssociated(existente, advogadoId);
       const updateData: Partial<typeof dadosResumo> = {
         tribunalId: dadosResumo.tribunalId,
       };
@@ -502,7 +505,10 @@ class TribunalService {
     const buscaLimitada = typeof limiteProcessos === 'number' && limiteProcessos > 0;
     const carregarProcessos = (numeros: string[]) =>
       Processo.findAll({
-        where: { numeroProcesso: numeros },
+        where: {
+          numeroProcesso: numeros,
+          ...(advogadoId ? { advogadoId } : {}),
+        },
         include: [
           { model: Parte, as: 'partes' },
           { model: Movimentacao, as: 'movimentacoes' },

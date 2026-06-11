@@ -25,7 +25,7 @@ describe('AdminSeedService', () => {
     expect(mockedFindOne).not.toHaveBeenCalled();
   });
 
-  it('atualiza admin existente com nova senha e dados', async () => {
+  it('não sobrescreve admin existente com nova senha e dados', async () => {
     const update = jest.fn(async () => undefined);
     (mockedFindOne as any).mockResolvedValue({
       id: 'adv-1',
@@ -42,12 +42,8 @@ describe('AdminSeedService', () => {
       email: 'sidney@example.com',
     });
 
-    expect(update).toHaveBeenCalledWith(expect.objectContaining({
-      nome: 'Sidney da Silva',
-      email: 'sidney@example.com',
-      ativo: true,
-      passwordHash: expect.any(String),
-    }));
+    expect(update).not.toHaveBeenCalled();
+    expect(mockedCreate).not.toHaveBeenCalled();
     expect(result.skipped).toBe(false);
     expect(result.created).toBe(false);
     expect(result.advogado?.oab).toBe('361329');
