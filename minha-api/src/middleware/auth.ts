@@ -7,6 +7,8 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import logger from '../config/logger';
 import { cache } from '../config/redis';
+import Advogado from '../models/Advogado';
+import { resolveAccountRole } from '../utils/authAccounts';
 
 export interface AuthPayload {
   userId: string;
@@ -130,6 +132,29 @@ export async function verifyToken(token: string, isRefresh = false): Promise<Aut
   return decoded;
 }
 
+async function hydrateActiveAuthPayload(decoded: AuthPayload): Promise<AuthPayload> {
+  if (decoded.role === 'SYSTEM') {
+    return decoded;
+  }
+
+  const advogadoId = decoded.advogadoId || decoded.userId;
+  if (!advogadoId) {
+    throw new Error('MISSING_ADVOGADO_SCOPE');
+  }
+
+  const advogado = await Advogado.findByPk(advogadoId);
+  if (!advogado || !advogado.ativo) {
+    throw new Error('INACTIVE_ACCOUNT');
+  }
+
+  return {
+    ...decoded,
+    userId: advogado.id,
+    advogadoId: advogado.id,
+    role: resolveAccountRole(advogado),
+  };
+}
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -175,7 +200,7 @@ export function authMiddleware(
   void (async () => {
     try {
       const decoded = await verifyToken(token, false);
-      req.user = decoded;
+      req.user = await hydrateActiveAuthPayload(decoded);
       next();
     } catch (error) {
       logger.warn('Tentativa de acesso com token inválido:', { error: getErrorMessage(error) });
@@ -221,7 +246,7 @@ export function optionalAuthMiddleware(
     void (async () => {
       try {
         const decoded = await verifyToken(parts[1], false);
-        req.user = decoded;
+        req.user = await hydrateActiveAuthPayload(decoded);
       } catch {
         // Token inválido, mas continuamos sem usuário
       } finally {

@@ -6,21 +6,13 @@ import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { generateToken, generateRefreshToken, verifyToken, blacklistToken, AuthPayload } from '../middleware/auth';
 import Advogado from '../models/Advogado';
+import {
+  isReservedAdminCredential,
+  normalizeAuthOab,
+  resolveAccountRole,
+} from '../utils/authAccounts';
 
 const router = Router();
-const normalize = (value?: string | null): string | undefined => value?.trim().toUpperCase();
-const isBridgeAccount = (oab: string): boolean => normalize(oab)?.startsWith('JX') === true;
-const isAdminAccount = (oab?: string, email?: string): boolean => {
-  const adminOab = normalize(process.env.ADMIN_OAB);
-  const currentOab = normalize(oab);
-  if (adminOab && currentOab && adminOab === currentOab) {
-    return true;
-  }
-
-  const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
-  const currentEmail = email?.trim().toLowerCase();
-  return !!adminEmail && !!currentEmail && adminEmail === currentEmail;
-};
 
 const buildAuthResponse = (advogado: Advogado, role: AuthPayload['role']) => {
   const payload: Omit<AuthPayload, 'iat' | 'exp'> = {
@@ -94,7 +86,7 @@ router.post('/login', async (req: Request, res: Response) => {
       });
     }
 
-    res.json(buildAuthResponse(advogado, isAdminAccount(advogado.oab, advogado.email) ? 'ADMIN' : 'USER'));
+    res.json(buildAuthResponse(advogado, resolveAccountRole(advogado)));
   } catch {
     res.status(500).json({
       erro: { codigo: 'LOGIN_ERROR', mensagem: 'Erro ao realizar login.' }
@@ -122,19 +114,21 @@ router.post('/register', async (req: Request, res: Response) => {
       });
     }
 
-    const normalizedOab = oab.trim().toUpperCase();
+    const normalizedOab = normalizeAuthOab(oab);
+    if (!normalizedOab) {
+      return res.status(400).json({
+        erro: { codigo: 'VALIDATION_ERROR', mensagem: 'OAB é obrigatória.' }
+      });
+    }
+
+    if (isReservedAdminCredential({ oab: normalizedOab, email })) {
+      return res.status(403).json({
+        erro: { codigo: 'RESERVED_ADMIN_CREDENTIALS', mensagem: 'Credenciais reservadas para administrador.' }
+      });
+    }
+
     const existing = await Advogado.findOne({ where: { oab: normalizedOab } });
     if (existing) {
-      if (isBridgeAccount(normalizedOab) && !existing.passwordHash) {
-        const bridgePasswordHash = await bcrypt.hash(senha, 12);
-        await existing.update({
-          passwordHash: bridgePasswordHash,
-          nome: existing.nome || nome,
-          email: existing.email || email,
-          ativo: true,
-        });
-        return res.status(200).json(buildAuthResponse(existing, 'USER'));
-      }
       return res.status(409).json({
         erro: { codigo: 'DUPLICATE_OAB', mensagem: 'Já existe advogado com esta OAB.' }
       });
@@ -159,7 +153,7 @@ router.post('/register', async (req: Request, res: Response) => {
       requestedBy: 'self-register',
     });
 
-    res.status(201).json(buildAuthResponse(advogado, 'USER'));
+    res.status(201).json(buildAuthResponse(advogado, resolveAccountRole(advogado)));
   } catch {
     res.status(500).json({
       erro: { codigo: 'REGISTER_ERROR', mensagem: 'Erro ao criar conta.' }
@@ -187,10 +181,16 @@ router.post('/refresh', async (req: Request, res: Response) => {
         await blacklistToken(decoded.jti, decoded.exp, true);
       }
 
+      const advogadoId = decoded.advogadoId || decoded.userId;
+      const advogado = await Advogado.findByPk(advogadoId);
+      if (!advogado || !advogado.ativo) {
+        throw new Error('INACTIVE_ACCOUNT');
+      }
+
       const payload: Omit<AuthPayload, 'iat' | 'exp'> = {
-        userId: decoded.userId,
-        advogadoId: decoded.advogadoId,
-        role: decoded.role,
+        userId: advogado.id,
+        advogadoId: advogado.id,
+        role: resolveAccountRole(advogado),
       };
 
       const accessToken = generateToken(payload);
@@ -277,7 +277,7 @@ router.get('/me', async (req: Request, res: Response) => {
       oab: advogado.oab,
       nome: advogado.nome,
       email: advogado.email,
-      role: decoded.role,
+      role: resolveAccountRole(advogado),
     });
   } catch {
     res.status(500).json({

@@ -296,7 +296,7 @@ const autoSeed = async () => {
     return;
   }
 
-  logger.info(`Seed: usuÃ¡rio admin ${result.created ? 'criado' : 'atualizado'} (${result.advogado?.oab})`);
+  logger.info(`Seed: usuÃ¡rio admin ${result.created ? 'criado' : 'jÃ¡ existe'} (${result.advogado?.oab})`);
 };
 
 // Start server
